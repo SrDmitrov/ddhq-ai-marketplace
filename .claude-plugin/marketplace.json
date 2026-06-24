@@ -1,0 +1,13 @@
+{
+  "name": "ddhq-mkpl",
+  "owner": {
+    "name": "Dominik Dimitrov"
+  },
+  "plugins": [
+    {
+      "name": "rules-and-guidelines",
+      "source": "./basics",
+      "description": "General rules and guidelines for AI agents when working on code repos."
+    }
+  ]
+}
