@@ -13,4 +13,6 @@ Follow these steps to install them.
 2. Copy the files at `${CLAUDE_SKILL_DIR}/resources/` and paste them to `.claude/rules/`
 3. Confirm to the user that the rules and guidelines have been installed and remind to fill in `conventions.md`.
 
-If the file already exists, ask the user whether to overwrite it (it may have been customized).
+### Update notes
+
+- If source and destination already exist and the content is different, always ask the user whether to overwrite it (it may have been customized).
