@@ -5,7 +5,7 @@ description: Installs ddhq's custom commands into the current project's .claude/
 
 # Install commands
 
-Follow these steps to install them.
+Delegate this task to a subagent with this type and model: `Agent(subagent_type: "general-purpose", model: "haiku", ...)` and instruct it to follow these installation steps.
 
 ## Steps
 
