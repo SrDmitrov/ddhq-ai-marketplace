@@ -16,3 +16,4 @@ Install ddhq's custom commands into the current project's `.claude/commands/` di
 ### Update notes
 
 - If source and destination already exist and the content is different, always ask the user whether to overwrite it (it may have been customized).
+- If Claude Code is sandboxed, use the `Write` tool.
