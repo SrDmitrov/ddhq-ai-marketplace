@@ -8,6 +8,11 @@
       "name": "basic-setup",
       "source": "./basics",
       "description": "ddhq's general rules, guidelines and hooks for AI agents."
+    },
+    {
+      "name": "masker",
+      "source": "./mods/env-secret-mask",
+      "description": "Masks secret env var values and SECRET_NAME=value pairs before the model reads them; refuses writes that carry a mask."
     }
   ]
 }
