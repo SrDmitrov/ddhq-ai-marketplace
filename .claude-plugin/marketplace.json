@@ -5,9 +5,9 @@
   },
   "plugins": [
     {
-      "name": "rules-and-guidelines",
+      "name": "basic-setup",
       "source": "./basics",
-      "description": "General rules and guidelines for AI agents when working on code repos."
+      "description": "ddhq's general rules, guidelines and hooks for AI agents."
     }
   ]
 }
