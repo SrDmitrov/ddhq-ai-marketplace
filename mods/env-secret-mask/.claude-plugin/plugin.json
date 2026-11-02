@@ -1,8 +1,0 @@
-{
-  "name": "env-secret-mask",
-  "version": "0.1.0",
-  "description": "Masks secret env var values and SECRET_NAME=value pairs before the model reads them; refuses writes that carry a mask.",
-  "author": {
-    "name": "Dominik Dimitrov"
-  }
-}

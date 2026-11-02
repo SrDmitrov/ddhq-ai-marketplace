@@ -1,8 +1,8 @@
 import type { Register } from 'claude-code'
-import { MASK_MARKER, parseEnv, pickSecrets, redact, redactBlock } from './redact'
+import { MASK_MARKER, parseEnv, pickSecrets, redact, redactBlock, scan } from './redact'
 
 const GUARDED_TOOLS: ReadonlySet<string> = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Bash'])
-const WITHHELD = '[env-secret-mask: content withheld, masking failed]'
+const withheld = (plugin: string) => `[${plugin}: content withheld, masking failed]`
 
 export const register: Register = on => {
   // Held in the module only: never written to $.state or $.store.
@@ -15,12 +15,13 @@ export const register: Register = on => {
       if (exitCode !== 0) throw new Error(`env exited ${exitCode}`)
       secrets = pickSecrets(parseEnv(stdout))
     } catch {
-      $.ui.status(`${$.plugin.name}: env snapshot failed; only NAME=value masking active`)
+      $.ui.status(`${$.plugin.name}: env snapshot failed; env values not masked, pattern rules still active`)
     }
     return started
   })
 
-  // Every row the model reads passes here: tool results, prompts, hook context, subagents.
+  // Rows the model reads pass here: tool results, prompts, subagents. Where the org's built-in
+  // guard loads, attachment, hook-context and compaction rows skip installed (user-tier) mods.
   on('session.append', ($, e, next) => {
     const content = e.message.content.map(b => redactBlock(b, secrets))
     const changed = JSON.stringify(content) !== JSON.stringify(e.message.content)
@@ -28,8 +29,9 @@ export const register: Register = on => {
   }).catch(($, e, next) => {
     if (next.called) return next(e)
     // Fail closed: withhold the row's readable text rather than store it unmasked.
+    const note = withheld($.plugin.name)
     const content = e.message.content.map(b =>
-      b.type === 'text' ? { ...b, text: WITHHELD } : b.type === 'tool_result' ? { ...b, content: WITHHELD } : b,
+      b.type === 'text' ? { ...b, text: note } : b.type === 'tool_result' ? { ...b, content: note } : b,
     )
     return next({ ...e, message: { ...e.message, content } })
   })
@@ -39,6 +41,22 @@ export const register: Register = on => {
     const rendered = await next(e)
     return rendered.text === null ? rendered : { ...rendered, text: redact(rendered.text, secrets) }
   })
+
+  // Where the org's guard loads, attachments skip this mod, but mentions still pass here.
+  // A mentioned file holding a secret is refused; Read output goes through session.append.
+  on('prompt.mention', async ($, e, next) => {
+    const spans = scan(await $.fs.read(e.path), secrets)
+    if (spans.length === 0) return next(e)
+    const rules = [...new Set(spans.map(s => s.rule))].join(', ')
+    return {
+      deny:
+        `${$.plugin.name}: ${e.mention} holds ${spans.length} likely secret(s) (${rules}). ` +
+        'Ask Claude to Read it instead; Read output is masked.',
+    }
+  }).catch(($, e, next) =>
+    // Fail closed: a failed hook would let the file be read unmasked (too large, not text, timeout).
+    next.called ? next(e) : { deny: `${$.plugin.name}: could not check ${e.mention} for secrets.` },
+  )
 
   // A masked value written back would overwrite the real secret on disk.
   on('tool.call', ($, e, next) =>

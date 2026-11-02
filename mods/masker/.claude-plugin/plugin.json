@@ -1,0 +1,8 @@
+{
+  "name": "masker",
+  "version": "0.2.0",
+  "description": "Masks secrets before the model reads them, using env values and rules derived from betterleaks; refuses writes that carry a mask.",
+  "author": {
+    "name": "Dominik Dimitrov"
+  }
+}

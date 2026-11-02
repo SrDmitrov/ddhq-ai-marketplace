@@ -11,8 +11,8 @@
     },
     {
       "name": "masker",
-      "source": "./mods/env-secret-mask",
-      "description": "Masks secret env var values and SECRET_NAME=value pairs before the model reads them; refuses writes that carry a mask."
+      "source": "./mods/masker",
+      "description": "Masks secrets before the model reads them, using env values and rules derived from betterleaks; refuses writes that carry a mask."
     }
   ]
 }
