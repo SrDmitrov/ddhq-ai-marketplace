@@ -13,6 +13,11 @@
       "name": "masker",
       "source": "./mods/masker",
       "description": "Masks secrets before the model reads them, using env values and rules derived from betterleaks; refuses writes that carry a mask."
+    },
+    {
+      "name": "poketokenbar-utils",
+      "source": "./mods/poketokenbar-utils",
+      "description": "Makes the PokeTokenBar floating pet follow Claude Code activity: working, waiting for input, done."
     }
   ]
 }

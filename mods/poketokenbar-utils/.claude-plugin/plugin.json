@@ -1,0 +1,8 @@
+{
+  "name": "poketokenbar-utils",
+  "version": "0.1.0",
+  "description": "Makes the PokeTokenBar floating pet follow Claude Code activity: working, waiting for input, done.",
+  "author": {
+    "name": "Dominik Dimitrov"
+  }
+}
