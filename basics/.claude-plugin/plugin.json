@@ -1,7 +1,7 @@
 {
   "name": "basics",
   "description": "ddhq's general rules, guidelines and hooks for AI agents",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "author": {
     "name": "Dominik Dimitrov"
   }
