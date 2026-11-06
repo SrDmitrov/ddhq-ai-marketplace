@@ -18,6 +18,13 @@ if printf '%s' "$command" | grep -Eq -- '--force|[[:space:]]-f([[:space:]]|$)'; 
   exit 2
 fi
 
+# Block branch deletion (-d, -D, --delete, or combined flags like -dr) even when
+# DDHQ_ALLOW_GIT=1 opts the project into other branch writes.
+if printf '%s' "$command" | grep -Eq -- '(^|[;&|[:space:]])git[[:space:]]+([^;&|]*[[:space:]])?branch([[:space:]][^;&|]*)?[[:space:]](-[[:alpha:]]*[dD][[:alpha:]]*|--delete)([[:space:]]|$)'; then
+  echo "Blocked: git branch deletion requires explicit user instruction. Command: $command" >&2
+  exit 2
+fi
+
 # Dangerous git subcommands that require explicit user approval
 dangerous_subcmds=(
   merge
@@ -56,12 +63,28 @@ fi
 subcmds_re=$(IFS='|'; echo "${dangerous_subcmds[*]}")
 
 # Read-only escape hatch for the subcommands above.
-# Format: "<subcmd>=<ERE matching one allowed argument>".
-# An invocation passes only when *every* argument matches the regex, so a bare
-# ref name (`git branch foo`) or a write flag (-d, -D, -m, -M, -c, -u, ...)
-# still gets blocked. Add a line here to open up another subcommand.
+# Format: "<subcmd>=<ERE matching the whole argument tail>" (each argument is
+# preceded by whitespace). An invocation passes only when its full tail
+# matches, so anything unrecognised -- a bare ref name (`git branch foo`,
+# `git tag v1`), a write flag (-d, -D, -m, -f, ...) or a write subcommand
+# (`reflog expire`) -- still gets blocked. Matching is case-sensitive.
+# Add a line here to open up another subcommand.
+S='[[:space:]]+'
+POS='[^-[:space:]][^[:space:]]*'          # positional: ref, pattern or path
+VAL="(=[^[:space:]]+|${S}${POS})"         # value of an option that takes one
+filter_opts="--(contains|no-contains|merged|no-merged|points-at|sort|format)${VAL}"
+branch_opts="-(a|r|v|vv|vvv|i|q)|--(all|remotes|verbose|quiet|show-current|ignore-case|omit-empty|no-abbrev|no-color|no-column)|--(color|column)(=[^[:space:]]+)?|--abbrev${VAL}|${filter_opts}"
+tag_opts="-n[0-9]*|-i|--(ignore-case|omit-empty|no-color|no-column)|--(color|column)(=[^[:space:]]+)?|${filter_opts}"
+clean_opts="-[dxXq]+|--quiet|-e${S}${POS}|--exclude=[^[:space:]]+"
+clean_dry="-n|--dry-run|-[dxXq]*n[dxXqn]*"
 readonly_args=(
-  "branch=-(a|r|l|v|vv|vvv|i|q)|--(all|remotes|list|verbose|quiet|color|no-color|column|no-column|show-current|ignore-case|omit-empty|no-abbrev)|--(contains|no-contains|merged|no-merged|points-at|sort|format|abbrev)(=[^[:space:]]+|[[:space:]]+[^-[:space:]][^[:space:]]*)"
+  # Listing options; positionals (patterns) only after -l/--list.
+  "branch=(${S}(${branch_opts}))*(${S}(-l|--list)(${S}(${branch_opts}|${POS}))*)?"
+  "tag=(${S}(${tag_opts}))*(${S}(-l|--list)(${S}(${tag_opts}|${POS}))*)?"
+  # Bare/options only, `show ...`, or `exists <ref>`; never expire/delete.
+  "reflog=(${S}-[^[:space:]]+)*|${S}show(${S}[^[:space:]]+)*|${S}exists${S}${POS}"
+  # Dry run only: -n/--dry-run required, no -f/-i in combined flags.
+  "clean=(${S}(${clean_opts}))*${S}(${clean_dry})(${S}(${clean_opts}|${clean_dry}))*(${S}--)?(${S}${POS})*"
 )
 
 # Split on shell separators so each git invocation is checked on its own,
@@ -76,8 +99,8 @@ while IFS= read -r segment; do
   fi
   [ "$allowed" -eq 1 ] || for entry in "${readonly_args[@]}"; do
     subcmd=${entry%%=*}
-    arg_re=${entry#*=}
-    if printf '%s' "$segment" | grep -Eqi "^[[:space:]]*git([[:space:]]+-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?)*[[:space:]]+${subcmd}([[:space:]]+(${arg_re}))*[[:space:]]*$"; then
+    tail_re=${entry#*=}
+    if printf '%s' "$segment" | grep -Eq "^[[:space:]]*git([[:space:]]+-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?)*[[:space:]]+${subcmd}(${tail_re})[[:space:]]*$"; then
       allowed=1
       break
     fi
