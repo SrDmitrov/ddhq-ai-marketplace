@@ -8,3 +8,4 @@ These guidelines dictate how the AI should approach implementing tasks and writi
 4. **Surgical Changes**: Touch only what you must. Do not refactor unrelated code, match existing styles, and clean up only the unused code created by your changes.
 5. **Goal-Driven Execution**: Define verifiable success criteria. Formulate tasks as testable steps and loop independently until verified.
 6. **Divide et Impera**: When exploring, planning, implementing, or creating/editing content, assess whether the work can be divided into self-contained subtasks and run independent ones in parallel. Delegate them to subagents following the `sub-agents.md` rules.
+7. **Dedicated Tools First**: Read, search, and edit files with the dedicated tools (e.g., Read, Grep, Edit, Write) instead of shell commands like `cat`, `grep`, or `sed`. Fall back to Bash only when no dedicated tool fits or the task justifies it.
