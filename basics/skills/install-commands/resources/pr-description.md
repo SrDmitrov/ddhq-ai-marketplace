@@ -1,17 +1,23 @@
 ---
-description: Create a description for a future Pull Request based on the changes made in the current branch.
+description: Create a description for a future Pull Request based on the changes made in the current branch, or in the source branch given as argument.
+argument-hint: [source-branch]
 ---
+
+## 0. Determine the source branch
+
+- The source branch is `$ARGUMENTS` if provided; otherwise, the current checked-out branch.
+- If provided, verify it exists with `git rev-parse --verify <branch>`; if it is not found locally, try `origin/<branch>`. If neither exists, stop and ask the user.
 
 ## 1. Get the task description
 
 - Look for a `bugs/` or `proposals/` directory. They are expected under `{project_root}/docs/`, but that is only an assumption: if they are not there, search the rest of the project.
-- If one exists, find the document that matches the current branch (by branch name, ticket ID, or topic) and extract the task description from it.
+- If one exists, find the document that matches the source branch (by branch name, ticket ID, or topic) and extract the task description from it.
 - If no description is available (neither directory exists, no document matches, or several match equally), stop and ask the user to provide the description of the task. Do not guess and do not continue without it.
 
 ## 2. Analyze the changes
 
 - Identify the target branch: the project's main development branch. It is probably named `develop` or `development`, but it can be different. It is never `main` or `master`. Check the existing branches (`git branch -a`) and the project documentation. If it cannot be determined with confidence, stop and ask the user.
-- Run `git diff <target>...HEAD` and `git log <target>..HEAD` to compare the current checked-out branch against the target branch.
+- Run `git diff <target>...<source>` and `git log <target>..<source>` to compare the source branch against the target branch.
 - Treat it as a PR and create a description with bullet points about the changes.
 
 ## 3. Write the description
@@ -29,7 +35,7 @@ description: Create a description for a future Pull Request based on the changes
 
 ### Descripción
 
-{{Resumen de 3-4 líneas de los cambios realizados en la rama actual comparada con la rama principal de desarrollo. Deben ir relacionados con la tarea y ser comprensibles para un revisor externo.}}
+{{Resumen de 3-4 líneas de los cambios realizados en la rama de origen comparada con la rama principal de desarrollo. Deben ir relacionados con la tarea y ser comprensibles para un revisor externo.}}
 
 ### Desarrollo
 
