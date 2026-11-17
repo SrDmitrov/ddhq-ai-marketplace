@@ -187,25 +187,40 @@ _flow_logs: list[Path] = []
 # (plus `emulator -list-avds`); the emulator itself is spawned by start_emulator.
 # --------------------------------------------------------------------------
 
-def _resolve_sdk_binary(subdir: str, name: str) -> str:
-    """Resolve an SDK binary: $ANDROID_HOME -> $ANDROID_SDK_ROOT -> PATH.
+def _default_sdk_root() -> str | None:
+    """Android Studio's default SDK location for this OS, or None if unknown."""
+    if sys.platform == "darwin":
+        return os.path.expanduser("~/Library/Android/sdk")
+    if sys.platform == "win32":
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        return os.path.join(local_app_data, "Android", "Sdk") if local_app_data else None
+    return os.path.expanduser("~/Android/Sdk")
 
-    No hardcoded machine path. Raises ValueError if the binary cannot be found.
+
+def _resolve_sdk_binary(subdir: str, name: str) -> str:
+    """Resolve an SDK binary: $ANDROID_HOME -> $ANDROID_SDK_ROOT -> OS default SDK root -> PATH.
+
+    A leading `~` in the env vars is expanded. Raises ValueError, listing every path tried,
+    if the binary cannot be found.
     """
-    for env_var in ("ANDROID_HOME", "ANDROID_SDK_ROOT"):
-        sdk_root = os.environ.get(env_var)
-        if sdk_root:
-            candidate = os.path.join(sdk_root, subdir, name)
-            if os.path.isfile(candidate):
-                return candidate
+    file_name = name + ".exe" if sys.platform == "win32" else name
+    roots = [os.environ.get(var) for var in ("ANDROID_HOME", "ANDROID_SDK_ROOT")]
+    roots.append(_default_sdk_root())
+    tried = []
+    for sdk_root in filter(None, roots):
+        candidate = os.path.join(os.path.expanduser(sdk_root), subdir, file_name)
+        if os.path.isfile(candidate):
+            return candidate
+        tried.append(candidate)
 
     which_result = shutil.which(name)
     if which_result:
         return which_result
+    tried.append("PATH")
 
     raise ValueError(
-        f"Could not resolve {name}: set ANDROID_HOME or ANDROID_SDK_ROOT in the Claude Code env (shell or .claude/settings.json env), "
-        f"or ensure {name} is on PATH."
+        f"Could not resolve {name}. Tried: {', '.join(tried)}. "
+        "Set ANDROID_HOME in the project's .claude/settings.local.json env (absolute path)."
     )
 
 
@@ -1086,7 +1101,10 @@ async def build_install(
     task = f":{module}:install{variant[0].upper()}{variant[1:]}"
     serial = await _resolve_device(device)
     if not os.environ.get("JAVA_HOME"):
-        raise ValueError("JAVA_HOME is not set: add it to the Claude Code env (shell or .claude/settings.json env).")
+        raise ValueError(
+            "JAVA_HOME is not set: add the project's JDK to .claude/settings.local.json env (absolute path). "
+            "On macOS, `/usr/libexec/java_home -V` lists installed JDKs."
+        )
     timeout_s = max(60, min(1800, timeout_s))
     log_path = Path(tempfile.gettempdir()) / "adbmm-gradle.log"
     loop = asyncio.get_running_loop()

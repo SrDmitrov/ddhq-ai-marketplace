@@ -334,7 +334,7 @@ def test_build_install_refuses_non_emulator_serial(project):
 def test_build_install_requires_java_home(monkeypatch, project):
     monkeypatch.delenv("JAVA_HOME", raising=False)
     result = asyncio.run(adbmm.build_install("devDebug", device="emulator-5554"))
-    assert result.startswith("Error: JAVA_HOME is not set") and "settings.json" in result
+    assert result.startswith("Error: JAVA_HOME is not set") and "settings.local.json" in result
 
 
 def test_build_install_failure_policy(monkeypatch, project, tmp_path):
@@ -540,3 +540,57 @@ def test_build_install_runs_expected_task(monkeypatch, project, tmp_path, varian
     monkeypatch.setattr(adbmm, "_run_process", fake_run_process)
     result = asyncio.run(adbmm.build_install(variant, module=module, device="emulator-5554"))
     assert calls == [[task]] and result.startswith(f"Built and installed {task} on emulator-5554")
+
+
+# --- SDK binary resolution ---
+
+def _fake_sdk(root, subdir, name):
+    binary = root / subdir / name
+    binary.parent.mkdir(parents=True)
+    binary.write_text("")
+    return binary
+
+
+@pytest.fixture
+def sdk_env(monkeypatch, tmp_path):
+    """Clean env: no SDK vars, fake home, nothing on PATH."""
+    monkeypatch.delenv("ANDROID_HOME", raising=False)
+    monkeypatch.delenv("ANDROID_SDK_ROOT", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(adbmm.shutil, "which", lambda name: None)
+    return tmp_path
+
+
+def test_resolve_env_var_wins_over_default(sdk_env, monkeypatch):
+    monkeypatch.setattr(adbmm.sys, "platform", "darwin")
+    _fake_sdk(sdk_env / "home" / "Library" / "Android" / "sdk", "emulator", "emulator")
+    env_binary = _fake_sdk(sdk_env / "custom", "emulator", "emulator")
+    monkeypatch.setenv("ANDROID_HOME", str(sdk_env / "custom"))
+    assert adbmm._resolve_emulator() == str(env_binary)
+
+
+@pytest.mark.parametrize("platform,parts", [
+    ("darwin", ("Library", "Android", "sdk")),
+    ("linux", ("Android", "Sdk")),
+])
+def test_resolve_falls_back_to_os_default(sdk_env, monkeypatch, platform, parts):
+    monkeypatch.setattr(adbmm.sys, "platform", platform)
+    binary = _fake_sdk(sdk_env.joinpath("home", *parts), "emulator", "emulator")
+    assert adbmm._resolve_emulator() == str(binary)
+
+
+def test_resolve_expands_tilde_in_env_var(sdk_env, monkeypatch):
+    binary = _fake_sdk(sdk_env / "home" / "mysdk", "platform-tools", "adb")
+    monkeypatch.setenv("ANDROID_HOME", "~/mysdk")
+    assert adbmm._resolve_adb() == str(binary)
+
+
+def test_resolve_error_lists_tried_paths(sdk_env, monkeypatch):
+    monkeypatch.setattr(adbmm.sys, "platform", "darwin")
+    monkeypatch.setenv("ANDROID_HOME", str(sdk_env / "x"))
+    with pytest.raises(ValueError) as exc:
+        adbmm._resolve_emulator()
+    msg = str(exc.value)
+    assert str(sdk_env / "x" / "emulator" / "emulator") in msg
+    assert str(sdk_env / "home" / "Library" / "Android" / "sdk" / "emulator" / "emulator") in msg
+    assert "PATH" in msg

@@ -26,18 +26,35 @@ The first start resolves dependencies with `uv`. If that is slow, raise `MCP_TIM
 
 ## Environment
 
-The server inherits the Claude Code env. Set these in your shell or in `.claude/settings.json`:
+The server runs in a terminal, not in Android Studio, so it does not see the IDE's settings (SDK path, Gradle JDK). It inherits the Claude Code env and passes it to `gradlew`.
+
+Set the env per project in `.claude/settings.local.json`. Claude Code keeps that file out of git. JDK and SDK paths differ per machine, and credentials must never be committed. Use absolute paths.
 
 ```json
 {
   "env": {
-    "ANDROID_HOME": "/path/to/Android/sdk",
-    "JAVA_HOME": "/path/to/jdk"
+    "JAVA_HOME": "/path/to/jdk-17",
+    "ANDROID_HOME": "/path/to/Android/sdk"
   }
 }
 ```
 
-`ANDROID_SDK_ROOT` works instead of `ANDROID_HOME`. If neither is set, `adb` and `emulator` must be on `PATH`.
+| Variable | Need | Purpose |
+|---|---|---|
+| `JAVA_HOME` | Required | JDK that runs Gradle. Match the project's Gradle JDK in Android Studio (for example Corretto 17). |
+| `ANDROID_HOME` | Recommended | SDK location. Falls back to the OS default (see below). |
+| `ANDROID_AVD_HOME` | Optional | AVD location, if not `~/.android/avd`. |
+| `GRADLE_OPTS`, `ORG_GRADLE_PROJECT_<prop>` | Optional | Gradle JVM options and project properties, such as private repository credentials. |
+
+On macOS, `/usr/libexec/java_home -V` lists the installed JDKs. A project JDK in `settings.local.json` overrides a system `JAVA_HOME`.
+
+The server looks for `adb` and `emulator` in this order:
+
+1. `ANDROID_HOME`, then `ANDROID_SDK_ROOT`. A leading `~` is expanded.
+2. The OS default SDK path: `~/Library/Android/sdk` on macOS, `~/Android/Sdk` on Linux, `%LOCALAPPDATA%\Android\Sdk` on Windows.
+3. `PATH`.
+
+`JAVA_HOME` has no fallback. `build_install` fails if it is unset.
 
 The project root is `CLAUDE_PROJECT_DIR`, or the current directory if unset. Screenshots go to `<root>/screenshots`.
 
