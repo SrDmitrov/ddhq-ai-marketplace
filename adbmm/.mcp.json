@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "adbmm": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "--script", "--quiet", "${CLAUDE_PLUGIN_ROOT}/server/adbmm.py"]
+    }
+  }
+}
