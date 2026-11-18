@@ -19,7 +19,7 @@ if printf '%s' "$command" | grep -Eq -- '--force|[[:space:]]-f([[:space:]]|$)'; 
 fi
 
 # Block branch deletion (-d, -D, --delete, or combined flags like -dr) even when
-# DDHQ_ALLOW_GIT=1 opts the project into other branch writes.
+# DDHQ_ALLOW_GIT opts the project into other branch writes.
 if printf '%s' "$command" | grep -Eq -- '(^|[;&|[:space:]])git[[:space:]]+([^;&|]*[[:space:]])?branch([[:space:]][^;&|]*)?[[:space:]](-[[:alpha:]]*[dD][[:alpha:]]*|--delete)([[:space:]]|$)'; then
   echo "Blocked: git branch deletion requires explicit user instruction. Command: $command" >&2
   exit 2
@@ -41,8 +41,11 @@ dangerous_subcmds=(
   replace
 )
 
-# Day-to-day git writes. A project opts in by setting DDHQ_ALLOW_GIT=1 in the
-# "env" block of its .claude/settings.json (done by the install-rules skill).
+# Day-to-day git writes. A project opts in via DDHQ_ALLOW_GIT in the "env"
+# block of its .claude/settings.json (set by the install-rules skill):
+#   unset/other  commit, push, checkout and branch are blocked
+#   local        commit, checkout and branch allowed; push blocked
+#   1            commit, push, checkout and branch allowed
 #
 # Exception: `git checkout` is allowed inside a linked worktree (not the main
 # one), detected via the hook's cwd: a linked worktree's git dir
@@ -50,14 +53,18 @@ dangerous_subcmds=(
 # off when the command changes directory (cd/pushd), since cwd would no
 # longer describe where git runs.
 in_linked_worktree=0
-if [ "${DDHQ_ALLOW_GIT:-0}" != "1" ]; then
-  dangerous_subcmds+=(commit push checkout branch)
-  if [ -n "$cwd" ] && ! printf '%s' "$command" | grep -Eq '(^|[^[:alnum:]_-])(cd|pushd)([^[:alnum:]_-]|$)'; then
-    git_dir=$(git -C "$cwd" rev-parse --path-format=absolute --git-dir 2>/dev/null)
-    common_dir=$(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
-    [ -n "$git_dir" ] && [ "$git_dir" != "$common_dir" ] && in_linked_worktree=1
-  fi
-fi
+case "${DDHQ_ALLOW_GIT:-0}" in
+  1) ;;
+  local) dangerous_subcmds+=(push) ;;
+  *)
+    dangerous_subcmds+=(commit push checkout branch)
+    if [ -n "$cwd" ] && ! printf '%s' "$command" | grep -Eq '(^|[^[:alnum:]_-])(cd|pushd)([^[:alnum:]_-]|$)'; then
+      git_dir=$(git -C "$cwd" rev-parse --path-format=absolute --git-dir 2>/dev/null)
+      common_dir=$(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+      [ -n "$git_dir" ] && [ "$git_dir" != "$common_dir" ] && in_linked_worktree=1
+    fi
+    ;;
+esac
 
 # Build a regex alternation: (commit|push|merge|...)
 subcmds_re=$(IFS='|'; echo "${dangerous_subcmds[*]}")
