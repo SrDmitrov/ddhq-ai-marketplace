@@ -1,0 +1,48 @@
+# Imported from coffe-break-with-questions.txt. Paths are replaced with placeholders.
+title: Coffee Break
+window: demo — claude — 100×40
+status: Opus 5.5
+
+@banner
+ ▐▛███▛█   **Claude Code** v2.1.322
+▝▜██████▀  Opus 5.5 · Claude Team
+ ▝▝   ▝▝   ~/projects/demo
+@user Hello! How are you?
+@say
+Doing well, ready to work. What are you working on today? I see a `hello.txt` file in `/Users/alex/projects/demo`. Is that related, or is this a new task?
+@done Sautéed for 3s · done 7:20 PM
+@user What coffee can you make me?
+@say
+I can't make real coffee. I have no hardware or coffee machine connected. I can help in other ways:
+
+- Give a recipe or brewing guide, such as espresso, pour-over, cold brew, or a latte.
+- Build something coffee-themed, such as a brew timer script or a coffee-ratio calculator page.
+
+Which do you want? If it's a recipe, what equipment do you have at home?
+@done Baked for 3s · done 7:20 PM
+@user ask me which one
+@say
+Use AskUserQuestion.
+@ask
+Which coffee help do you want? → Drink suggestion
+@ask
+What coffee taste do you like? → Strong and bold
+What coffee equipment do you have at home? → Drip or filter machine
+Do you want it hot or iced? → Hot
+@say
+My pick is a strong black filter coffee made in your drip machine.
+
+Recipe (one large mug, about 350 ml):
+- Coffee: 27 g, which is about 4½ tablespoons. Use a dark or medium-dark roast. A normal mug uses about 21 g, so this makes it stronger.
+- Water: 350 ml of cold, filtered water.
+- Grind: Medium-fine, slightly finer than standard filter grind. The finer grind gives more body.
+- Brew: Run a normal cycle. Drink it right away, because the hot plate turns the coffee bitter after about 20 minutes.
+
+For an even bolder cup: Use 30 g of coffee. Do not cut the water instead, because a very small batch extracts badly in most drip machines.
+
+Do you buy pre-ground coffee or whole beans? With pre-ground coffee, you can't change the grind, so add the extra coffee instead.
+@done Worked for 14s · done 7:21 PM
+@user Nice, thanks!
+@say
+You're welcome. Enjoy the coffee. Do you want to work on something in `/Users/alex/projects/demo` next, or was this just a coffee break?
+@done Worked for 2s · done 7:21 PM

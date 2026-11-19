@@ -1,0 +1,19 @@
+# Front matter: page text. Everything from the first @directive on is the conversation.
+title: Hello World
+subtitle: A minimal replay of a Claude Code session. Copy this file to start a new one.
+window: test — claude — 100×40
+status: Opus 5.5
+footer: Wording is verbatim; timings are compressed.
+
+@banner
+ ▐▛███▛█   **Claude Code** v2.1.322
+▝▜██████▀  Opus 5.5 · Claude Team
+ ▝▝   ▝▝   ~/Downloads/test
+@user Hello World!
+@say
+Hello! What do you need? I see a `hello.txt` in this directory. Should I do something with it?
+@done Baked for 2s · done 6:35 PM
+@user No, just wave!
+@say
+👋
+@done Baked for 1s · done 6:35 PM
