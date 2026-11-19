@@ -7,7 +7,7 @@ No dependencies. Needs Node 18 or newer.
 ## Install
 
 ```
-/plugin marketplace add <path or URL of this marketplace>
+/plugin marketplace add SrDmitrov/ddhq-ai-marketplace
 /plugin install chat-replay@ddhq-mkpl
 ```
 
