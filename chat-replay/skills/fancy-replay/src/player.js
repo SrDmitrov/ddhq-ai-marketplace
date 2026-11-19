@@ -44,9 +44,13 @@
     if (id !== run) throw new Abort();
   }
 
-  const stick = () => { if (autoscroll) scroller.scrollTop = scroller.scrollHeight; };
+  // Follows new content while the view is at the bottom. A scroll event that arrives after content grew
+  // (e.g. a block expanding) must not turn following off: only scrolling above the last stick() does.
+  let pinned = 0;
+  const stick = () => { if (autoscroll) { scroller.scrollTop = scroller.scrollHeight; pinned = scroller.scrollTop; } };
   scroller.addEventListener('scroll', () => {
-    autoscroll = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 40;
+    autoscroll = scroller.scrollTop >= pinned - 1 || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 40;
+    if (!autoscroll) pinned = Infinity; // once off, only reaching the bottom turns following back on
   });
 
   const div = (cls) => { const d = document.createElement('div'); if (cls) d.className = cls; return d; };
@@ -59,6 +63,51 @@
     log.appendChild(r);
     stick();
     return c;
+  }
+
+  // syntax highlighting with highlight.js (loaded from cdnjs in page.html). Plain text when it did not
+  // load (offline, blocked) or the language is unknown. lang: a ```lang tag or a file extension.
+  function highlight(el, text, lang) {
+    if (window.hljs && lang && hljs.getLanguage(lang)) el.innerHTML = hljs.highlight(text, { language: lang, ignoreIllegals: true }).value; // hljs escapes HTML
+    else el.textContent = text;
+  }
+
+  // Before a tool output or code block appears: Claude's thinking glyph for a moment (think), then an
+  // empty box grows to the block's height and the block fades in (expand). Fast-forward skips both.
+  // Thinking time grows with the block: 300 ms, plus 50 ms for every 5 lines, at most 1000 ms.
+  const thinkMs = (lines) => Math.min(1000, 300 + 50 * Math.floor(lines / 5));
+  async function think(c, id, lines) {
+    const t = c.appendChild(div('think'));
+    stick();
+    try { await wait(thinkMs(lines), id); } finally { t.remove(); }
+  }
+  // Running grow/fade animations, so Pause can hold them (setPaused).
+  const live = new Set();
+  const animate = (el, frames, opts) => {
+    const a = el.animate(frames, opts);
+    live.add(a);
+    if (paused) a.pause();
+    a.onfinish = a.oncancel = () => live.delete(a);
+    return a;
+  };
+  async function expand(c, el, id) { // fast() covers reduced motion too (instant)
+    const box = c.appendChild(div('reveal'));
+    box.appendChild(el);
+    if (fast()) { stick(); return; }
+    el.style.opacity = '0';
+    box.style.overflow = 'hidden'; // clip only while growing: diff rows reach 4px past the box
+    const a = animate(box, [{ height: '0px' }, { height: box.offsetHeight + 'px' }], { duration: 350 / speed, easing: 'cubic-bezier(.2, .9, .3, 1)' });
+    try {
+      while (a.playState !== 'finished') { // follow the growing box
+        if (fast()) { a.finish(); break; }
+        stick();
+        await wait(16, id);
+      }
+    } finally { box.style.overflow = ''; }
+    stick();
+    el.style.opacity = '';
+    animate(el, [{ opacity: 0 }, { opacity: 1 }], { duration: 300 / speed, easing: 'ease-out' });
+    await wait(300, id);
   }
 
   // inline markup: `code` and **bold**
@@ -163,27 +212,47 @@
       const m = e.arg.match(/^([^(]+)\(([\s\S]*)\)$/);
       c.append(span('b', m ? m[1] : e.arg), document.createTextNode(m ? `(${m[2]})` : ''));
       stick();
-      await wait(1300, id);
+      await wait(500, id);
+      if (e.body.length) await think(c, id, e.body.length);
       g.className = 'g ' + (err ? 'm-err' : 'm-ok');
-      const o = div('out');
-      c.appendChild(o);
+      const lang = (e.arg.match(/\.([A-Za-z0-9]+)(?=[\s,)]|$)/) || [])[1]; // extension at the end of a path, e.g. Update(src/a.test.ts)
+      const file = /^(Read|Write|Edit|Update|MultiEdit)\(/.test(e.arg); // its numbered lines are a file view
+      const o = div('out'); // the whole output appears at once
       for (let i = 0; i < e.body.length; i++) {
-        const d = e.body[i].match(/^(\s*\d+ ([+-]))(.*)$/); // numbered diff line: colored number and sign, tinted row
-        const line = d ? span(d[2] === '+' ? 'add' : 'del') : span(i === 0 && err ? 'err' : '', e.body[i]);
-        if (d) line.append(span('n', d[1]), span('', d[3]));
+        // numbered line (file view or diff): number and +/- sign, then code; diff rows are tinted
+        const d = e.body[i].match(/^(\s*\d+ ([+-]?))(.*)$/);
+        let line;
+        if (d && (d[2] || file)) { // unsigned numbered lines elsewhere (e.g. Bash `wc -l`) stay plain output
+          line = span('ln' + (d[2] === '+' ? ' add' : d[2] === '-' ? ' del' : ''));
+          const code = span('');
+          highlight(code, d[3], lang);
+          line.append(span('n', d[1]), code);
+        } else line = span(i === 0 && err ? 'err' : '', e.body[i]);
         o.append(span('', i === 0 ? '⎿' : ''), line);
-        stick();
-        await wait(45, id);
       }
+      await expand(c, o, id);
     },
     async say(e, id) {
       await wait(700, id);
       const c = row('⏺', '', 'say');
-      let pre = null, fence = false;
-      for (const line of e.body) {
-        if (line === '```') { fence = !fence; pre = null; continue; } // fenced block: shown verbatim
-        if (fence || /^[┌│├└]/.test(line)) { // box-drawing table or fenced block: shown verbatim
-          if (!pre) { const w = div('tblwrap'); pre = document.createElement('pre'); w.appendChild(pre); c.appendChild(w); }
+      const verbatim = () => { const w = div('tblwrap'); w.appendChild(document.createElement('pre')); return w; };
+      let pre = null;
+      for (let i = 0; i < e.body.length; i++) {
+        const line = e.body[i];
+        const f = line.match(/^```\s*([\w+#.-]*)\s*$/);
+        if (f) { // fenced block: verbatim, shown at once; ```lang highlights it
+          let stop = i + 1;
+          while (stop < e.body.length && !/^```\s*$/.test(e.body[stop])) stop++;
+          const w = verbatim(), code = e.body.slice(i + 1, stop);
+          highlight(w.firstChild, code.join('\n'), f[1]);
+          pre = null;
+          i = stop;
+          await think(c, id, code.length);
+          await expand(c, w, id);
+          continue;
+        }
+        if (/^[┌│├└]/.test(line)) { // box-drawing table: shown verbatim, line by line
+          if (!pre) pre = c.appendChild(verbatim()).firstChild;
           pre.textContent += (pre.textContent ? '\n' : '') + line;
           stick();
           await wait(60, id);
@@ -289,7 +358,7 @@
     prevBtn.disabled = startBtn.disabled = pos < 2 && (ended || !!release);
     playBtn.classList.toggle('cue', !!release && pos < 2); // waiting for the viewer to begin
   }
-  function setPaused(p) { paused = p; sync(); }
+  function setPaused(p) { paused = p; live.forEach((a) => (p ? a.pause() : a.play())); sync(); }
   // Holds playback until Play or Next (or Previous, Start, End) releases it.
   function hold(id) {
     return new Promise((res, rej) => {
@@ -333,7 +402,7 @@
   async function play(start = -1) {
     const id = ++run;
     if (release) release();
-    log.innerHTML = ''; typed.textContent = ''; spinStop();
+    log.innerHTML = ''; typed.textContent = ''; spinStop(); live.forEach((a) => a.cancel());
     term.classList.remove('crt', 'power');
     pos = turn = 0; progressEl.textContent = `turn 0/${TURNS}`;
     autoscroll = true; instant = matchMedia('(prefers-reduced-motion: reduce)').matches;

@@ -4,16 +4,14 @@ Top item is next. Move an item to the bottom section when it ships.
 
 ## Next
 
-### Import `.jsonl` conversations
-Claude Code stores every session as JSON Lines (`~/.claude/projects/<project>/<session-id>.jsonl`). Import from it as well as from the `/export` text.
-- Why: the JSON is structured, so prompts, replies, tool calls with their full input and output, answered questions and timings come through exactly. The `/export` importer has to guess where the terminal wrapped lines (see the importer items below).
-- Output: the same `.chat` draft on stdout, so the hand-edit and build steps stay the same.
-- Open questions:
-  - A new script, or one `import-claude-code.mjs` that picks the parser by file extension?
-  - How much of each tool result to keep (full output vs. the first lines plus `… +N lines`, as the terminal shows it)?
-  - How to show sidechains (subagent messages) and compaction summaries?
-  - Where to get the `@done` time ("Baked for 17s") from the timestamps.
-- Privacy: the JSONL holds more than the export (full tool output, file contents, environment details), so the private-data check before publishing matters even more.
+### Code-block follow-ups (audit of 0.2.0)
+Fixed and checked in Chrome: Bash output read as code, language from the wrong dot, blocking CDN script (now async with an integrity hash), unrecognized fences (```` ```c++ ````, trailing spaces), clipped diff tint, missing token colors, low contrast on the diff tints, `=>` ligature. Live playback follows a 200-line block to the end.
+
+Open:
+- **Not yet tested in a browser:** scrolling up during playback, then partway back down, must not turn following back on; Pause during the grow/fade must hold the animation; offline mode must show plain code.
+- **Thinking glyph in Safari:** it cycles through CSS `content` keyframes. Check that Safari animates it; if not, it shows a still `✻`.
+- **Tool output is highlighted line by line,** so block comments and template strings that span lines are colored wrong. Fenced blocks are highlighted as a whole and are fine.
+- **No example has a code block or diff,** so a rebuild does not exercise this code. The `examples/` rule forbids new files: add a short TS diff and a fenced block to an existing example (needs the user's OK).
 
 ## Later
 
@@ -28,6 +26,14 @@ Claude Code stores every session as JSON Lines (`~/.claude/projects/<project>/<s
 - Hook/plugin `⏺` messages (e.g. `masker: …`) come through as `@say`; there is no `@note` detection.
 - No regression fixture: the raw export for `coffe-break-with-questions.chat` is gone. Keep one raw `/export` text with its expected `.chat` to test importer changes.
 
+### Rewrite in TypeScript with a framework
+Move the player and build scripts to TypeScript and a friendly framework with a simple architecture (MVVM is fine).
+- Why: `player.js` mixes playback state, DOM building and animation in one file; typed models and views separate them.
+- Open questions:
+  - Which framework (light enough for a single-file, offline-capable page)?
+  - Build output: still one self-contained `.html` per replay, and how the skill builds it without a manual install step.
+  - Keep `CLAUDE.md`'s "no dependencies" rule, or replace it with a pinned, minimal toolchain.
+
 ### Project
 - Automated playback test: the fake-DOM smoke test lives only in a temp folder. Move it into the repo.
 
@@ -35,3 +41,4 @@ Claude Code stores every session as JSON Lines (`~/.claude/projects/<project>/<s
 - Animated player with presentation controls, CRT start-up, `@ask` cards, light/dark themes.
 - `/export` importer; fixed: prompts read as slash commands, `Answered Claude's questions`, diff lines in tool output, extra `⎿` blocks, `· summary` tags.
 - `/fancy-replay <export.txt>` skill, shipped as the `chat-replay` plugin.
+- Diffs as tinted rows, syntax highlighting with highlight.js, tool output and code blocks revealed with a thinking glyph, grow and fade.

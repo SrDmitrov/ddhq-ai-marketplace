@@ -20,6 +20,9 @@
   --t-code: #268bd2;
   --t-add-bg: #dfeec4;
   --t-del-bg: #f8d7cf;
+  /* syntax highlighting */
+  --t-kw: #0033b3; --t-str: #05631a; --t-num: #1750eb; --t-com: #5c6064; --t-fn: #00627a; --t-ty: #7a3e9d;
+  --t-add-n: #4f6b00; --t-del-n: #b02a26; /* diff line numbers; all code colors keep 4.5:1 on the tints */
   /* start-up CRT: an amber phosphor screen, dark in both themes on purpose */
   --crt-bg: #140b04;
   --crt-fg: #ffb45e;
@@ -33,7 +36,8 @@
     --bg: #1b1e23; --fg: #d7dae0; --muted: #7f848e; --btn: #282c34; --btn-line: #3e4451; --accent: #d77757;
     --t-bg: #282c34; --t-chrome: #21252b; --t-fg: #abb2bf; --t-dim: #7f848e; --t-user: #33425c; --t-line: #3e4451;
     --t-clay: #d77757; --t-shine: #f3c1ad; --t-ok: #98c379; --t-err: #e06c75; --t-code: #61afef;
-    --t-add-bg: #2f4b2c; --t-del-bg: #5c2b2f;
+    --t-add-bg: #243a24; --t-del-bg: #47252a; --t-add-n: #98c379; --t-del-n: #ec8a92;
+    --t-kw: #d38ee8; --t-str: #98c379; --t-num: #d19a66; --t-com: #a0a7b3; --t-fn: #61afef; --t-ty: #e5c07b;
     color-scheme: dark;
   }
 }
@@ -41,7 +45,8 @@
   --bg: #1b1e23; --fg: #d7dae0; --muted: #7f848e; --btn: #282c34; --btn-line: #3e4451; --accent: #d77757;
   --t-bg: #282c34; --t-chrome: #21252b; --t-fg: #abb2bf; --t-dim: #7f848e; --t-user: #33425c; --t-line: #3e4451;
   --t-clay: #d77757; --t-shine: #f3c1ad; --t-ok: #98c379; --t-err: #e06c75; --t-code: #61afef;
-  --t-add-bg: #2f4b2c; --t-del-bg: #5c2b2f;
+  --t-add-bg: #243a24; --t-del-bg: #47252a; --t-add-n: #98c379; --t-del-n: #ec8a92;
+  --t-kw: #d38ee8; --t-str: #98c379; --t-num: #d19a66; --t-com: #a0a7b3; --t-fn: #61afef; --t-ty: #e5c07b;
   color-scheme: dark;
 }
 
@@ -86,7 +91,7 @@ header .controls { margin-left: auto; }
   background: var(--t-bg); color: var(--t-fg); border-radius: 10px; overflow: hidden;
   box-shadow: 0 18px 50px -20px rgba(0,0,0,.55), 0 0 0 1px rgba(0,0,0,.25);
   display: flex; flex-direction: column; width: 100%; height: 100%;
-  font: 13px/1.55 var(--mono);
+  font: 13px/1.55 var(--mono); font-variant-ligatures: none; /* a terminal shows => as two characters */
 }
 /* start-up: a small amber CRT powers on, then grows into the themed terminal (see boot() and open() in player.js) */
 .term { position: relative; }
@@ -178,10 +183,23 @@ h1 { font: 700 15px/1.2 var(--mono); margin: 0; color: var(--t-fg); overflow: hi
 .out { display: grid; grid-template-columns: 3ch minmax(0, 1fr); color: var(--t-dim); margin-top: 1px; }
 .out .err { color: var(--t-err); }
 .out span { white-space: pre-wrap; overflow-wrap: anywhere; }
-.out .add, .out .del { color: var(--t-fg); padding-inline: 4px; margin-inline: -4px; } /* diff rows: tinted background, full width */
+.out .ln { color: var(--t-fg); padding-inline: 4px; margin-inline: -4px; } /* numbered code line; diff rows get a full-width tint */
 .out .add { background: var(--t-add-bg); } .out .del { background: var(--t-del-bg); }
-.out .add .n { color: var(--t-ok); } .out .del .n { color: var(--t-err); }
-.out span:nth-child(odd) { user-select: none; }
+.out .n { color: var(--t-dim); } .out .add .n { color: var(--t-add-n); } .out .del .n { color: var(--t-del-n); }
+.out > span:nth-child(odd), .out .n { user-select: none; }
+/* before a tool output or code block: thinking glyph, then the box grows and the block fades in (think/expand in player.js) */
+.think { color: var(--t-clay); }
+.think::before { content: '✻'; animation: think calc(1s / var(--speed)) steps(1) infinite; }
+.reveal { overflow: hidden; }
+/* highlight.js token classes */
+.hljs-keyword, .hljs-built_in, .hljs-literal, .hljs-meta, .hljs-tag, .hljs-name, .hljs-selector-tag, .hljs-section, .hljs-bullet { color: var(--t-kw); }
+.hljs-string, .hljs-regexp, .hljs-symbol, .hljs-link, .hljs-addition { color: var(--t-str); }
+.hljs-number { color: var(--t-num); }
+.hljs-comment, .hljs-quote { color: var(--t-com); font-style: italic; }
+.hljs-title.function_, .hljs-attr, .hljs-attribute, .hljs-property, .hljs-variable, .hljs-template-variable { color: var(--t-fn); }
+.hljs-title.class_, .hljs-type, .hljs-selector-class, .hljs-selector-id, .hljs-selector-attr, .hljs-selector-pseudo { color: var(--t-ty); }
+.hljs-deletion { color: var(--t-del-n); }
+.hljs-section, .hljs-strong { font-weight: 700; } .hljs-emphasis { font-style: italic; }
 .say .p, .say .h { white-space: pre-wrap; }
 .say .h { font-weight: 700; }
 .say .li { display: grid; grid-template-columns: 3ch minmax(0, 1fr); }
@@ -208,6 +226,10 @@ h1 { font: 700 15px/1.2 var(--mono); margin: 0; color: var(--t-fg); overflow: hi
 .foot { color: var(--muted); font-size: 0.8rem; margin: 0; }
 
 @keyframes blink { 50% { opacity: 0; } }
+@keyframes think { /* the spinner's glyph cycle (GLYPHS in player.js) */
+  0% { content: '·'; } 10% { content: '✢'; } 20% { content: '✳'; } 30% { content: '✶'; } 40% { content: '✻'; }
+  50% { content: '✽'; } 60% { content: '✻'; } 70% { content: '✶'; } 80% { content: '✳'; } 90% { content: '✢'; }
+}
 @keyframes rise { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
 @keyframes shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
 @keyframes crt-on {
@@ -225,7 +247,7 @@ h1 { font: 700 15px/1.2 var(--mono); margin: 0; color: var(--t-fg); overflow: hi
 @keyframes wipe { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
 @media (prefers-reduced-motion: reduce) {
   .row, .spin .verb, .caret, .m-run, .term.power, .term.crt::after, .banner.draw,
-  #play.cue, .ask, .ask::before, .ask-body, .ask-a, .ask-cur, .ask-a.picked .ask-ok { animation: none; }
+  #play.cue, .ask, .ask::before, .ask-body, .ask-a, .ask-cur, .ask-a.picked .ask-ok, .think::before { animation: none; }
 }
 @media (max-width: 560px) {
   .stage { height: 76vh; }

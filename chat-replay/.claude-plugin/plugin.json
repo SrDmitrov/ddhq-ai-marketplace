@@ -1,6 +1,6 @@
 {
   "name": "chat-replay",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "license": "GPL-3.0-only",
   "description": "Turns a Claude Code /export into an animated terminal replay, published as an artifact or a standalone HTML page.",
   "author": {

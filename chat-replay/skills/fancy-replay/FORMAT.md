@@ -32,8 +32,8 @@ All five settings are optional. Lines starting with `#` before the first directi
 | `@banner` + lines | Start-up banner. Leading block characters are drawn as the logo. |
 | `@user text` | A prompt, typed into the input box and then sent. |
 | `@slash /cmd` + optional line | A slash command and its one-line result. |
-| `@say` + lines | The assistant's reply, streamed. One paragraph per line; blank lines separate paragraphs. Supports `- ` bullets, `  - ` nested bullets, `1. ` items, `## ` headings, `` `code` ``, `**bold**`, box-drawing tables (shown as-is) and a ``` fenced block (shown verbatim, e.g. diagrams). |
-| `@tool Name(args)` + lines | A tool call and its output. `@tool!` marks it as failed (red). Numbered diff lines (`12 +…`, `12 -…`) are shown green/red. |
+| `@say` + lines | The assistant's reply, streamed. One paragraph per line; blank lines separate paragraphs. Supports `- ` bullets, `  - ` nested bullets, `1. ` items, `## ` headings, `` `code` ``, `**bold**`, box-drawing tables (shown as-is) and a ``` fenced block (shown verbatim, e.g. diagrams; ```ts, ```python, ```bash etc. adds syntax highlighting). |
+| `@tool Name(args)` + lines | A tool call and its output. `@tool!` marks it as failed (red). Numbered lines (`12 …`, `12 +…`, `12 -…`) are shown as code, highlighted by the file extension in the call (highlight.js from cdnjs; plain text offline); `+`/`-` rows get a green/red tint. |
 | `@ask` + lines | Answered questions (AskUserQuestion), one `Question → Answer` per line (`->` also works). A card asks each one and marks the answer, then folds into `User answered Claude's questions:`. |
 | `@note text` | A dimmed system notice with a `⏺` marker. |
 | `@dim text` | A dimmed line, such as `Wrote 2 memories (ctrl+o to expand)`. |

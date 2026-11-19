@@ -62,6 +62,8 @@
   <p class="foot">{{FOOTER}}</p>
 </div>
 
+<!-- syntax highlighting; async so a slow CDN never holds the player back: code shown before it loads stays plain -->
+<script async src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js" integrity="sha384-F/bZzf7p3Joyp5psL90p/p89AZJsndkSoGwRpXcZhleCWhd8SnRuoYo4d0yirjJp" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script>
 const EVENTS = {{DATA}};
 {{JS}}
