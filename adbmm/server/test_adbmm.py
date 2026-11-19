@@ -17,19 +17,28 @@ LAUNCHER = "com.android.launcher3"
 
 
 def node(text="", desc="", rid="", pkg=APP, clickable=False, bounds="[0,0][100,100]",
-         password=False, children=""):
+         password=False, children="", scrollable=False, focusable=False, checkable=False,
+         checked=False, selected=False, enabled=True):
     """One uiautomator <node> element with the given attributes and child XML."""
+    flags = {
+        "clickable": clickable, "scrollable": scrollable, "checkable": checkable,
+        "checked": checked, "focusable": focusable, "selected": selected,
+        "enabled": enabled, "password": password,
+    }
+    attrs = " ".join(f'{key}="{str(value).lower()}"' for key, value in flags.items())
     return (
         f'<node text="{text}" resource-id="{rid}" class="android.view.View" package="{pkg}" '
-        f'content-desc="{desc}" clickable="{str(clickable).lower()}" long-clickable="false" '
-        f'scrollable="false" checkable="false" focusable="false" '
-        f'password="{str(password).lower()}" bounds="{bounds}">{children}</node>'
+        f'content-desc="{desc}" long-clickable="false" {attrs} bounds="{bounds}">{children}</node>'
     )
+
+
+def hierarchy(*top_nodes):
+    return f'<hierarchy rotation="0">{"".join(top_nodes)}</hierarchy>'
 
 
 def parse(*top_nodes):
     """Parse a hierarchy made of the given top-level node XML fragments."""
-    return adbmm._parse_ui_tree_nodes(f'<hierarchy rotation="0">{"".join(top_nodes)}</hierarchy>')
+    return adbmm._parse_ui_tree_nodes(hierarchy(*top_nodes))
 
 
 def test_compose_parent_gets_label_from_child_and_matches():
@@ -227,6 +236,146 @@ def test_screen_text_full_mode_keeps_text_and_caps_at_20():
 
 def test_get_state_rejects_unknown_mode():
     assert asyncio.run(adbmm.get_state(mode="verbose")).startswith("Error: mode must be one of")
+
+
+def test_normalize_strips_diacritics():
+    assert adbmm._normalize("Café  Ñandú") == "cafe nandu"
+
+
+def test_accentless_query_matches_exact_and_substring_tiers():
+    nodes = parse(node(text="Añadir café", clickable=True))
+    assert adbmm._find_candidates(nodes, None, "anadir cafe", None, None)[0] == 1
+    assert adbmm._find_candidates(nodes, None, "anadir", None, None)[0] == 2
+
+
+def test_scrollable_container_merges_at_most_three_labels():
+    nodes = parse(node(clickable=True, scrollable=True,
+                       children="".join(node(text=f"item {i}") for i in range(6))))
+    assert nodes[0]["label"] == "item 0 item 1 item 2 …"
+    texts = adbmm._screen_text(nodes, *adbmm.SCREEN_TEXT_MODES["optimal"])
+    assert texts == "item 3 · item 4 · item 5"  # not merged, so still visible
+
+
+def test_unlabelled_button_gets_nearest_labelled_ancestor_as_context():
+    nodes = parse(node(
+        clickable=True, children=node(text="Item name")
+        + node(rid=f"{APP}:id/button_add", clickable=True, bounds="[0,0][10,10]"),
+    ))
+    button = nodes[2]
+    assert button["label"] == "" and button["context"] == "Item name"
+    assert adbmm._node_line(button) == 'id=button_add in "Item name" center=(5,5)'
+    # Context is display-only: the row is the only text match.
+    tier, hits = adbmm._find_candidates(nodes, None, "Item name", None, None)
+    assert tier == 1 and hits == [nodes[0]]
+
+
+def test_node_line_shows_widget_state_flags():
+    nodes = parse(
+        node(text="Terms", checkable=True, checked=True, bounds="[0,0][10,10]"),
+        node(text="Tab", clickable=True, selected=True, bounds="[0,0][10,10]"),
+        node(text="Pay", clickable=True, enabled=False, bounds="[0,0][10,10]"),
+        node(text="Off", checkable=True, bounds="[0,0][10,10]"),
+    )
+    assert adbmm._node_line(nodes[0]) == '"Terms" [checked] center=(5,5)'
+    assert adbmm._node_line(nodes[1]) == '"Tab" [selected] center=(5,5)'
+    assert adbmm._node_line(nodes[2]) == '"Pay" [disabled] center=(5,5)'
+    assert adbmm._node_line(nodes[3]) == '"Off" center=(5,5)'
+
+
+def test_screen_text_keeps_non_consecutive_duplicates_and_amounts_next_to_labels():
+    nodes = parse(
+        node(text="19,32 €"),
+        node(text="Envío"),
+        node(text="19,32 €"),  # same amount, different row: kept
+        node(text="Total", clickable=True),
+        node(text="Tot"),  # substring of a label: kept
+        node(text="Total"),  # exact label: dropped
+    )
+    text = adbmm._screen_text(nodes, *adbmm.SCREEN_TEXT_MODES["optimal"])
+    assert text == "19,32 € · Envío · 19,32 € · Tot"
+
+
+def test_sensitive_merged_child_value_stays_out_of_text_line():
+    nodes = parse(node(rid=f"{APP}:id/cvc_field", clickable=True, children=node(text="123")))
+    assert "123" not in adbmm._screen_text(nodes, *adbmm.SCREEN_TEXT_MODES["full"])
+
+
+FOCUS_APP = f"  mCurrentFocus=Window{{abc u0 {APP}/.MainActivity}}\n"
+FOCUS_LAUNCHER = f"  mCurrentFocus=Window{{abc u0 {LAUNCHER}/.Launcher}}\n"
+
+
+@pytest.fixture
+def state(monkeypatch):
+    """get_state against canned dumpsys/uiautomator output: state(xml, window=..., mode=...)."""
+    async def fake_resolve_device(device):
+        return "emulator-5554"
+
+    def run(xml, window=FOCUS_APP + "    isKeyguardShowing=false\n", mode="optimal"):
+        async def fake_window(serial):
+            return window
+
+        async def fake_dump(serial):
+            return xml
+
+        monkeypatch.setattr(adbmm, "_resolve_device", fake_resolve_device)
+        monkeypatch.setattr(adbmm, "_dumpsys_window", fake_window)
+        monkeypatch.setattr(adbmm, "_dump_ui_tree", fake_dump)
+        return asyncio.run(adbmm.get_state(mode=mode))
+
+    return run
+
+
+def element_lines(output):
+    return [line for line in output.splitlines() if line.startswith("- ")]
+
+
+def test_get_state_header_and_text_line(state):
+    out = state(hierarchy(node(text="Mi pedido"), node(text="OK", clickable=True)))
+    assert out.splitlines()[:5] == [
+        "Device: emulator-5554",
+        f"Package: {APP}",
+        f"Activity: {APP}/.MainActivity",
+        "",
+        "1 interactive element(s):",
+    ]
+    assert out.endswith("\n\nText: Mi pedido")
+    assert "Text:" not in state(hierarchy(node(text="OK", clickable=True)))
+
+
+def test_get_state_reports_locked_screen(state):
+    out = state(hierarchy(node(text="OK", clickable=True)), window=FOCUS_APP + WINDOW_LOCKED)
+    assert "Screen: locked (keyguard showing) — call unlock" in out
+
+
+@pytest.mark.parametrize("mode, shown, more", [("optimal", 10, 15), ("full", 20, 5)])
+def test_get_state_caps_element_list_per_mode(state, mode, shown, more):
+    out = state(hierarchy(*(node(text=f"b{i}", clickable=True) for i in range(25))), mode=mode)
+    lines = element_lines(out)
+    assert "25 interactive element(s):" in out
+    assert len(lines) == shown + 1
+    assert lines[-1] == f"- … (+{more} more)"
+    assert lines[0].startswith('- "b0"')
+
+
+def test_get_state_no_overflow_line_at_cap(state):
+    out = state(hierarchy(*(node(text=f"b{i}", clickable=True) for i in range(10))))
+    assert "more)" not in out and len(element_lines(out)) == 10
+
+
+def test_get_state_lists_layout_noise_after_real_elements(state):
+    noise = [node(scrollable=True), node(focusable=True)] * 6
+    real = [node(text=f"b{i}", clickable=True) for i in range(3)]
+    disabled = node(text="Pay", clickable=True, enabled=False)
+    lines = element_lines(state(hierarchy(*noise, *real, disabled)))
+    assert [line.split()[1] for line in lines[:4]] == ['"b0"', '"b1"', '"b2"', '"Pay"']
+    assert "[disabled]" in lines[3]
+    assert lines[-1] == "- … (+6 more)"
+
+
+def test_get_state_package_from_dump_flags_focus_lag(state):
+    out = state(hierarchy(node(text="OK", clickable=True)), window=FOCUS_LAUNCHER)
+    assert f"Package: {APP}" in out
+    assert f"Activity: {LAUNCHER}/.Launcher (window focus differs from screen package)" in out
 
 
 # Trimmed from a real API 35 `dumpsys window` capture (locked); screen-off is the AOSP form.

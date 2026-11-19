@@ -58,10 +58,14 @@ Dependencies:
 Edge cases:
 - Compose labels sit on non-clickable child nodes; they are merged into the clickable \
 parent's `label`.
-- Matching is normalized (Unicode, whitespace, case): exact, then substring. One hit \
+- Matching is normalized (Unicode, accents, whitespace, case): exact, then substring. One hit \
 taps. Several hits, or only fuzzy hits, return candidates and tap nothing.
 - get_state ends with a `Text:` line: static text not already in an element label \
 (titles, status, empty-state and error messages).
+- Element lines carry widget state flags: [checked], [selected], [disabled]. An unlabelled \
+button shows its nearest labelled ancestor as `in "..."` (display only, not matchable).
+- get_state `Package:` is the dumped screen's package. An `Activity:` line flagged "window \
+focus differs" means focus lags the screen or a dialog/overlay is on top: trust the elements.
 - get_state modes apply to both lists (elements and Text): mode="optimal" (default) shows \
 max 10 entries per list and cuts lines at 80 chars; mode="full" shows max 20 per list, \
 uncut. Overflow ends with "+N more". Hidden elements stay tappable by selector. Use full \
@@ -112,6 +116,8 @@ MAX_LABEL_CHARS = 80
 # get_state limits per mode, for both the element list and `Text:`:
 # (max entries per list, max chars per line or None for no cut).
 SCREEN_TEXT_MODES = {"optimal": (10, MAX_LABEL_CHARS), "full": (20, None)}
+# A clickable scrollable container merges at most this many child labels (a list is not a label).
+MERGE_SCROLLABLE_MAX_PARTS = 3
 PROJECT_ROOT = Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()).resolve()
 SCREENSHOTS_DIR = PROJECT_ROOT / "screenshots"
 # Only debug install tasks are reachable, so release/signing tasks cannot run.
@@ -523,28 +529,45 @@ def _is_clickable(node: dict) -> bool:
     return node.get("clickable") == "true" or node.get("long-clickable") == "true"
 
 
+def _is_layout_noise(node: dict) -> bool:
+    """Unlabelled, id-less node that is only scrollable or focusable (a layout container)."""
+    return not (
+        node.get("label") or node.get("resource-id")
+        or _is_clickable(node) or node.get("checkable") == "true"
+    )
+
+
 def _merge_label(nodes: list[dict], idx: int) -> str:
     """Join the non-empty text/content-desc of a node's descendants (Compose child labels).
 
-    Nested clickable subtrees are skipped (they carry their own label). A sensitive
-    node never exposes its descendants' values.
+    Nested clickable subtrees are skipped (they carry their own label). A scrollable
+    container keeps at most MERGE_SCROLLABLE_MAX_PARTS parts, ending in "…". Children whose
+    value went into the label are marked `_merged` (get_state's Text: line skips them).
+    A sensitive node never exposes its descendants' values.
     """
     node = nodes[idx]
+    max_parts = MERGE_SCROLLABLE_MAX_PARTS if node.get("scrollable") == "true" else None
     parts: list[str] = []
+    capped = False
     i, end = idx + 1, node["_end"]
-    while i < end:
+    while i < end and not capped:
         child = nodes[i]
         if _is_clickable(child):
             i = child["_end"]
             continue
         for value in (child.get("text", ""), child.get("content-desc", "")):
             value = " ".join(value.split())
-            if value and value not in parts[-1:]:
-                parts.append(value)
+            if not value or value in parts[-1:]:
+                continue
+            if max_parts is not None and len(parts) == max_parts:
+                capped = True
+                break
+            parts.append(value)
+            child["_merged"] = True
         i += 1
     if parts and _is_sensitive(node):
         return REDACTED_PLACEHOLDER
-    return " ".join(parts)
+    return " ".join(parts) + (" …" if capped else "")
 
 
 def _parse_ui_tree_nodes(xml_text: str) -> list[dict]:
@@ -574,12 +597,24 @@ def _parse_ui_tree_nodes(xml_text: str) -> list[dict]:
 
     walk([root] if root.tag == "node" else list(root), -1)
 
+    # Document order: ancestors are labelled before their descendants look them up.
     for idx, node in enumerate(nodes):
         label = " ".join((node.get("text") or node.get("content-desc") or "").split())
         if not label and _is_clickable(node):
             label = _merge_label(nodes, idx)
         node["label"] = label
+        if not label and _is_clickable(node):
+            parent = node["_parent"]
+            while parent != -1 and not nodes[parent]["label"]:
+                parent = nodes[parent]["_parent"]
+            if parent != -1:
+                node["context"] = nodes[parent]["label"]  # display only, never matched
     return nodes
+
+
+def _screen_package(nodes: list[dict], activity: str) -> str:
+    """Package of the dumped screen (root node), else the focused activity's package."""
+    return next((n["package"] for n in nodes if n.get("package")), _package_of(activity))
 
 
 def _bounds_center(bounds: str) -> tuple[int, int] | None:
@@ -591,8 +626,11 @@ def _bounds_center(bounds: str) -> tuple[int, int] | None:
 
 
 def _normalize(value: str) -> str:
-    """NFKC, collapse every Unicode whitespace (NBSP, narrow NBSP, ...) to one space, strip, casefold."""
-    return " ".join(unicodedata.normalize("NFKC", value).split()).casefold()
+    """NFKD without combining marks (diacritics), collapse every Unicode whitespace (NBSP,
+    narrow NBSP, ...) to one space, strip, casefold."""
+    decomposed = unicodedata.normalize("NFKD", value)
+    stripped = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    return " ".join(stripped.split()).casefold()
 
 
 def _short_id(resource_id: str) -> str:
@@ -711,9 +749,11 @@ def _node_line(
     node: dict, with_class: bool = False, with_pkg: bool = False,
     max_chars: int | None = MAX_LABEL_CHARS,
 ) -> str:
-    """Compact node description: "label" id=… desc="…" class=… pkg=… center=(x,y); empty fields omitted.
+    """Compact node description; empty fields omitted:
+    "label" id=… in "context" [checked] [selected] [disabled] desc="…" class=… pkg=… center=(x,y).
 
-    The label is cut to max_chars (None: no cut); matching always uses the full label.
+    `in "context"` (nearest labelled ancestor) appears only for an unlabelled node. Labels
+    are cut to max_chars (None: no cut); matching always uses the full label.
     """
     parts: list[str] = []
     label = node.get("label", "")
@@ -722,6 +762,14 @@ def _node_line(
     node_id = _short_id(node.get("resource-id", ""))
     if node_id:
         parts.append(f"id={node_id}")
+    if not label and node.get("context"):
+        parts.append(f'in "{_cut(node["context"], max_chars)}"')
+    if node.get("checked") == "true":
+        parts.append("[checked]")
+    if node.get("selected") == "true":
+        parts.append("[selected]")
+    if node.get("enabled") == "false":
+        parts.append("[disabled]")
     desc = " ".join(node.get("content-desc", "").split())
     if desc and desc != label:
         parts.append(f'desc="{_cut(desc, max_chars)}"')
@@ -1266,12 +1314,16 @@ async def device_info(device: str | None = None) -> str:
 async def get_state(device: str | None = None, mode: str = "optimal") -> str:
     """Primary observe tool: foreground package/activity + interactive elements, one round trip.
 
-    One line per element: "label" id=… desc="…" center=(x,y). Compose labels are merged from
-    child nodes into `label`; `center` is in device pixels (usable for tap x, y). A final
-    `Text:` line lists static text not already in a label. Modes apply to both lists:
+    One line per element: "label" id=… [checked] [selected] [disabled] desc="…" center=(x,y).
+    Compose labels are merged from child nodes into `label`; an unlabelled button shows its
+    nearest labelled ancestor as `in "…"`. `center` is in device pixels (usable for tap x, y).
+    Unlabelled layout containers are listed last. A final `Text:` line lists static text not
+    already in a label. Modes apply to both lists:
     mode="optimal" (default): max 10 entries per list, lines cut at 80 chars with "…".
     mode="full": max 20 entries per list, never cut. Overflow ends with "+N more"; hidden
     elements stay tappable by selector. Empty entries are usually loading placeholders.
+    `Package:` is the package of the dumped screen; `Activity:` comes from window focus and
+    is flagged when its package differs (focus lag, dialog or overlay).
     Use this, never `adb shell` in Bash: the Bash sandbox cannot reach the adb server.
     """
     limits = SCREEN_TEXT_MODES.get(mode)
@@ -1282,12 +1334,16 @@ async def get_state(device: str | None = None, mode: str = "optimal") -> str:
     activity = await _current_activity(serial, window_text)
     screen_state = _screen_state(window_text)
     all_nodes = _parse_ui_tree_nodes(await _dump_ui_tree(serial))
-    nodes = [n for n in all_nodes if _is_interactive(n)]
+    nodes = sorted((n for n in all_nodes if _is_interactive(n)), key=_is_layout_noise)
+    package = _screen_package(all_nodes, activity)
+    activity_note = "" if package == _package_of(activity) else (
+        " (window focus differs from screen package)"
+    )
 
     lines = [
         f"Device: {serial}",
-        f"Package: {_package_of(activity)}",
-        f"Activity: {activity}",
+        f"Package: {package}",
+        f"Activity: {activity}{activity_note}",
     ]
     if screen_state == "off":
         lines.append("Screen: off")
@@ -1317,19 +1373,21 @@ def _cut(text: str, max_chars: int | None) -> str:
 def _screen_text(nodes: list[dict], max_entries: int, max_chars: int | None) -> str:
     """Static text in document order, skipping text already in an interactive label.
 
-    Joined with " · ", at most max_entries entries, each cut to max_chars (None: no cut).
+    Skips text merged into a label and text equal to a whole label; drops only consecutive
+    duplicates. Joined with " · ", at most max_entries entries, each cut to max_chars
+    (None: no cut).
     """
-    labels = [_normalize(n.get("label", "")) for n in nodes if _is_interactive(n)]
-    seen: set[str] = set()
+    labels = {_normalize(n.get("label", "")) for n in nodes if _is_interactive(n)}
+    previous = None
     texts: list[str] = []
     for node in nodes:
-        if _is_interactive(node):
+        if _is_interactive(node) or node.get("_merged"):
             continue
         text = " ".join((node.get("text") or node.get("content-desc") or "").split())
         key = _normalize(text)
-        if not key or key in seen or any(key in label for label in labels):
+        if not key or key == previous or key in labels:
             continue
-        seen.add(key)
+        previous = key
         texts.append(_cut(text, max_chars))
     extra = len(texts) - max_entries
     joined = " · ".join(texts[:max_entries])
@@ -1409,14 +1467,12 @@ async def ui_tree(device: str | None = None, interactive_only: bool = True) -> s
     """
     serial = await _resolve_device(device)
     activity = await _current_activity(serial)
-    nodes = _parse_ui_tree_nodes(await _dump_ui_tree(serial))
-
-    if interactive_only:
-        nodes = [n for n in nodes if _is_interactive(n)]
+    all_nodes = _parse_ui_tree_nodes(await _dump_ui_tree(serial))
+    nodes = [n for n in all_nodes if _is_interactive(n)] if interactive_only else all_nodes
     if not nodes:
         return "No UI nodes found."
 
-    lines = [f"Package: {_package_of(activity)}", f"{len(nodes)} node(s):"]
+    lines = [f"Package: {_screen_package(all_nodes, activity)}", f"{len(nodes)} node(s):"]
     lines.extend(f"- {_node_line(n, with_class=True)}" for n in nodes)
     return _truncate("\n".join(lines))
 
