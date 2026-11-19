@@ -168,7 +168,10 @@
       const o = div('out');
       c.appendChild(o);
       for (let i = 0; i < e.body.length; i++) {
-        o.append(span('', i === 0 ? '⎿' : ''), span(i === 0 && err ? 'err' : /^\s*\d+ \+/.test(e.body[i]) ? 'add' : /^\s*\d+ -/.test(e.body[i]) ? 'del' : '', e.body[i]));
+        const d = e.body[i].match(/^(\s*\d+ ([+-]))(.*)$/); // numbered diff line: colored number and sign, tinted row
+        const line = d ? span(d[2] === '+' ? 'add' : 'del') : span(i === 0 && err ? 'err' : '', e.body[i]);
+        if (d) line.append(span('n', d[1]), span('', d[3]));
+        o.append(span('', i === 0 ? '⎿' : ''), line);
         stick();
         await wait(45, id);
       }
