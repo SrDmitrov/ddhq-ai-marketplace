@@ -17,6 +17,7 @@ refuse (or mask) screens that show credential fields.
 import asyncio
 import atexit
 import functools
+import inspect
 import io
 import os
 import re
@@ -37,6 +38,13 @@ from PIL import Image as PILImage, ImageDraw
 
 INSTRUCTIONS = """\
 adb emulator control.
+
+Rules:
+- NEVER run `adb` or `emulator` from Bash, even when it looks like fewer turns. The Bash \
+sandbox cannot reach the adb server (127.0.0.1:5037), and the CLI bypasses the emulator-only \
+guard. Use list_devices (not `adb devices`), get_state/ui_tree (not `uiautomator dump`), \
+network (not `cmd connectivity`/`svc`), run_steps to batch several actions in one call.
+- If no tool covers a need, tell the user. Do not fall back to the CLI.
 
 Roles: get_state is the primary observation (text). screenshot is orientative only \
 (downscaled by `scale`). Actions (tap, long_press) are selector-first.
@@ -159,6 +167,17 @@ PRESS_KEY_ALLOWLIST = {
     # WAKEUP is idempotent; POWER is deliberately absent (it toggles the screen off).
     "WAKEUP": "KEYCODE_WAKEUP",
 }
+WAIT_FOR_MAX_S = 15.0
+WAIT_FOR_POLL_S = 0.5
+# network(): toggle name -> (shell argv, completed with enable/disable; global setting with its state).
+NETWORK_TOGGLES = {
+    "airplane": (["cmd", "connectivity", "airplane-mode"], "airplane_mode_on"),
+    "wifi": (["svc", "wifi"], "wifi_on"),
+    "data": (["svc", "data"], "mobile_data"),
+}
+# wifi_on: 1 on, 2 on despite airplane mode, 3 off because of airplane mode.
+NETWORK_ON_VALUES = {"1", "2"}
+RUN_STEPS_MAX = 50
 
 # Session default target device, set by use_device().
 _session_device: str | None = None
@@ -829,7 +848,10 @@ def _validate_save_as(save_as: str) -> Path:
 @mcp.tool()
 @_returns_errors
 async def list_devices() -> str:
-    """List connected Android devices/emulators whose adb state is exactly 'device'."""
+    """List connected Android devices/emulators whose adb state is exactly 'device'.
+
+    Use this, never `adb devices` in Bash: the Bash sandbox cannot reach the adb server.
+    """
     returncode, stdout_bytes, stderr_bytes = await _run_adb(["devices", "-l"])
     _check(returncode, stderr_bytes, "adb devices -l")
 
@@ -1250,6 +1272,7 @@ async def get_state(device: str | None = None, mode: str = "optimal") -> str:
     mode="optimal" (default): max 10 entries per list, lines cut at 80 chars with "…".
     mode="full": max 20 entries per list, never cut. Overflow ends with "+N more"; hidden
     elements stay tappable by selector. Empty entries are usually loading placeholders.
+    Use this, never `adb shell` in Bash: the Bash sandbox cannot reach the adb server.
     """
     limits = SCREEN_TEXT_MODES.get(mode)
     if limits is None:
@@ -1726,6 +1749,75 @@ async def wait(seconds: float) -> str:
     return f"Waited {seconds}s."
 
 
+@mcp.tool()
+@_returns_errors
+async def wait_for(
+    text: str | None = None,
+    resource_id: str | None = None,
+    content_desc: str | None = None,
+    package: str | None = None,
+    gone: bool = False,
+    timeout_s: float = 5.0,
+    device: str | None = None,
+) -> str:
+    """Wait until an element matching the selector is on screen (gone=True: until none is).
+
+    Same matching as tap (exact, then substring; fuzzy hits do not count), but any number of
+    hits is fine. Polls fresh UI dumps for up to timeout_s (max 15). timeout_s=0 checks once:
+    use it as an assertion. On timeout returns an error with the closest elements.
+    """
+    if not (resource_id or text or content_desc):
+        raise ValueError("Provide a selector (resource_id/text/content_desc).")
+    timeout_s = max(0.0, min(WAIT_FOR_MAX_S, timeout_s))
+    serial = await _resolve_device(device)
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_s
+    while True:
+        nodes = _parse_ui_tree_nodes(await _dump_ui_tree(serial))
+        tier, hits = _find_candidates(nodes, resource_id, text, content_desc, package)
+        found = tier in (1, 2)
+        if found and not gone:
+            return f"Found {len(hits)} match(es): {_node_line(hits[0], with_pkg=True)}"
+        if gone and not found:
+            return "Gone."
+        if loop.time() >= deadline:
+            break
+        await asyncio.sleep(WAIT_FOR_POLL_S)
+    selector = text or content_desc or resource_id
+    head = f"{selector!r} still on screen" if gone else f"{selector!r} not found"
+    closest = _candidate_lines(hits[:5]) or "(no elements)"
+    raise ValueError(f"{head} after {timeout_s}s; closest:\n{closest}")
+
+
+@mcp.tool()
+@_returns_errors
+async def network(
+    airplane: bool | None = None,
+    wifi: bool | None = None,
+    data: bool | None = None,
+    device: str | None = None,
+) -> str:
+    """Turn airplane mode, wifi and mobile data on/off, then report all three states.
+
+    Omitted toggles are left as they are; no args only reports. Airplane is applied first.
+    States come from global settings and can lag a second behind a toggle: call again to confirm.
+    """
+    serial = await _resolve_device(device)
+    wanted = {"airplane": airplane, "wifi": wifi, "data": data}
+    for name, enabled in wanted.items():
+        if enabled is None:
+            continue
+        argv, _ = NETWORK_TOGGLES[name]
+        returncode, _, stderr_bytes = await _adb_shell(serial, [*argv, "enable" if enabled else "disable"])
+        _check(returncode, stderr_bytes, f"{name} {'enable' if enabled else 'disable'}")
+    states = []
+    for name, (_, setting) in NETWORK_TOGGLES.items():
+        returncode, stdout_bytes, stderr_bytes = await _adb_shell(serial, ["settings", "get", "global", setting])
+        _check(returncode, stderr_bytes, f"read {setting}")
+        states.append(f"{name}={'on' if _decode(stdout_bytes).strip() in NETWORK_ON_VALUES else 'off'}")
+    return "Network: " + " ".join(states)
+
+
 # --------------------------------------------------------------------------
 # App lifecycle
 # --------------------------------------------------------------------------
@@ -1813,6 +1905,80 @@ async def uninstall_app(package: str, device: str | None = None) -> str:
     if returncode != 0 or "Success" not in output:
         raise ValueError(f"could not uninstall '{package}' (exit {returncode}): {output}")
     return f"Uninstalled {package}."
+
+
+# --------------------------------------------------------------------------
+# Scripted steps — a batch of allowlisted tool calls, stops at the first failure.
+# --------------------------------------------------------------------------
+
+# Non-destructive actions only: no uninstall, build, emulator lifecycle, screenshots or trace.
+STEP_ACTIONS = {
+    fn.__name__: getattr(fn, "__wrapped__", fn)
+    for fn in (
+        tap, long_press, swipe, scroll, input_text, clear_text, press_key, wait, wait_for,
+        network, launch_app, launch_activity, stop_app,
+    )
+}
+
+
+def _bind_step(n: int, step: object) -> tuple[str, dict]:
+    """Validate step n (1-based) against its action's signature: (action, kwargs)."""
+    if not isinstance(step, dict):
+        raise ValueError(f"step {n}: expected an object, got {type(step).__name__}.")
+    kwargs = dict(step)
+    action = kwargs.pop("action", None)
+    if action not in STEP_ACTIONS:
+        raise ValueError(f"step {n}: action must be one of {sorted(STEP_ACTIONS)}, got {action!r}.")
+    if "device" in kwargs:
+        raise ValueError(f"step {n}: 'device' is set once on run_steps, not per step.")
+    try:
+        inspect.signature(STEP_ACTIONS[action]).bind(**kwargs)
+    except TypeError as e:
+        raise ValueError(f"step {n} ({action}): invalid args: {e}.")
+    return action, kwargs
+
+
+@mcp.tool()
+@_returns_errors
+async def run_steps(steps: list[dict], device: str | None = None) -> str:
+    """Run a scripted test: a list of actions in one call, stopping at the first failure.
+
+    Each step is {"action": <tool name>, ...that tool's args}, without `device`. Actions: tap,
+    long_press, swipe, scroll, input_text, clear_text, press_key, wait, wait_for, network,
+    launch_app, launch_activity, stop_app. Use wait_for as an assertion (timeout_s=0 checks once).
+    All steps are validated before any runs. Max 50 steps. Reports one line per step; on failure
+    appends the get_state view of the screen. Example:
+    [{"action": "launch_app", "package": "com.example"},
+     {"action": "wait_for", "text": "Log in", "timeout_s": 10},
+     {"action": "tap", "text": "Log in"},
+     {"action": "wait_for", "text": "Welcome"}]
+    """
+    if not steps:
+        raise ValueError("steps is empty.")
+    if len(steps) > RUN_STEPS_MAX:
+        raise ValueError(f"too many steps ({len(steps)}); max {RUN_STEPS_MAX}.")
+    bound = [_bind_step(n, step) for n, step in enumerate(steps, 1)]
+    serial = await _resolve_device(device)
+
+    lines = []
+    for n, (action, kwargs) in enumerate(bound, 1):
+        fn = STEP_ACTIONS[action]
+        if "device" in inspect.signature(fn).parameters:
+            kwargs["device"] = serial
+        try:
+            result = await fn(**kwargs)
+        except ValueError as e:
+            lines += [
+                f"{n} FAIL {action}: {e}",
+                f"Stopped at step {n}/{len(bound)}.",
+                "",
+                "Screen at failure:",
+                await get_state(device=serial),
+            ]
+            return _truncate("\n".join(lines))
+        lines.append(f"{n} ok {action}: {result}")
+    lines.append(f"All {len(bound)} step(s) passed.")
+    return _truncate("\n".join(lines))
 
 
 if __name__ == "__main__":

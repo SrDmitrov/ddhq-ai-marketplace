@@ -197,6 +197,8 @@ def test_fastmcp_introspection_after_decorator():
     assert "scale" in tools["screenshot"].inputSchema["properties"]
     assert "max_edge" not in tools["screenshot"].inputSchema["properties"]
     assert tools["tap"].description.startswith("Tap a UI element")
+    assert {"network", "wait_for", "run_steps"} <= set(tools)
+    assert "steps" in tools["run_steps"].inputSchema["properties"]
 
 
 def test_screen_text_lists_static_text_not_in_labels():
@@ -594,3 +596,132 @@ def test_resolve_error_lists_tried_paths(sdk_env, monkeypatch):
     assert str(sdk_env / "x" / "emulator" / "emulator") in msg
     assert str(sdk_env / "home" / "Library" / "Android" / "sdk" / "emulator" / "emulator") in msg
     assert "PATH" in msg
+
+
+class FakeShell:
+    """Records adb shell argv; answers `settings get global <key>` from a dict."""
+
+    def __init__(self, settings=None, fail=None):
+        self.calls, self.settings, self.fail = [], settings or {}, fail
+
+    async def __call__(self, serial, args, timeout=adbmm.DEFAULT_TIMEOUT):
+        self.calls.append(args)
+        if self.fail and args[:len(self.fail)] == self.fail:
+            return 1, b"", b"boom"
+        if args[:3] == ["settings", "get", "global"]:
+            return 0, self.settings.get(args[3], "0").encode() + b"\n", b""
+        return 0, b"", b""
+
+
+@pytest.fixture
+def emulator(monkeypatch):
+    monkeypatch.setattr(adbmm, "_session_device", "emulator-5554")
+
+
+def test_network_query_only_reads_states(monkeypatch, emulator):
+    shell = FakeShell({"airplane_mode_on": "0", "wifi_on": "2", "mobile_data": "1"})
+    monkeypatch.setattr(adbmm, "_adb_shell", shell)
+    assert asyncio.run(adbmm.network()) == "Network: airplane=off wifi=on data=on"
+    assert all(call[:2] == ["settings", "get"] for call in shell.calls)
+
+
+def test_network_applies_airplane_first_then_others(monkeypatch, emulator):
+    shell = FakeShell({"airplane_mode_on": "1", "wifi_on": "3", "mobile_data": "0"})
+    monkeypatch.setattr(adbmm, "_adb_shell", shell)
+    result = asyncio.run(adbmm.network(data=False, airplane=True))
+    assert shell.calls[:2] == [
+        ["cmd", "connectivity", "airplane-mode", "enable"],
+        ["svc", "data", "disable"],
+    ]
+    assert result == "Network: airplane=on wifi=off data=off"
+
+
+def test_network_reports_toggle_failure(monkeypatch, emulator):
+    monkeypatch.setattr(adbmm, "_adb_shell", FakeShell(fail=["svc", "wifi"]))
+    assert asyncio.run(adbmm.network(wifi=True)).startswith("Error: wifi enable failed (exit 1)")
+
+
+def fake_screens(monkeypatch, *screens):
+    """_dump_ui_tree returns the given hierarchies in turn, repeating the last one."""
+    xml = [f'<?xml version="1.0"?><hierarchy rotation="0">{s}</hierarchy>' for s in screens]
+    calls = {"n": 0}
+
+    async def dump(serial):
+        calls["n"] += 1
+        return xml[min(calls["n"], len(xml)) - 1]
+
+    monkeypatch.setattr(adbmm, "_dump_ui_tree", dump)
+    monkeypatch.setattr(adbmm, "WAIT_FOR_POLL_S", 0)
+    return calls
+
+
+def test_wait_for_polls_until_element_appears(monkeypatch, emulator):
+    calls = fake_screens(monkeypatch, node(text="Loading"), node(text="Welcome back"))
+    result = asyncio.run(adbmm.wait_for(text="welcome", timeout_s=5))
+    assert result.startswith('Found 1 match(es): "Welcome back"')
+    assert calls["n"] == 2
+
+
+def test_wait_for_timeout_zero_is_a_single_check(monkeypatch, emulator):
+    calls = fake_screens(monkeypatch, node(text="Loading", clickable=True))
+    result = asyncio.run(adbmm.wait_for(text="Welcome", timeout_s=0))
+    assert result.startswith("Error: 'Welcome' not found after 0.0s; closest:")
+    assert calls["n"] == 1
+
+
+def test_wait_for_gone(monkeypatch, emulator):
+    fake_screens(monkeypatch, node(text="Loading"), node(text="Done"))
+    assert asyncio.run(adbmm.wait_for(text="Loading", gone=True)) == "Gone."
+
+
+def test_wait_for_requires_selector():
+    assert asyncio.run(adbmm.wait_for()).startswith("Error: Provide a selector")
+
+
+def test_run_steps_validates_all_steps_before_running(monkeypatch, emulator):
+    shell = FakeShell()
+    monkeypatch.setattr(adbmm, "_adb_shell", shell)
+    bad = [
+        ([{"action": "press_key", "key": "BACK"}, {"action": "uninstall_app", "package": "x"}],
+         "Error: step 2: action must be one of"),
+        ([{"action": "tap", "text": "a", "device": "emulator-5556"}], "Error: step 1: 'device' is set once"),
+        ([{"action": "tap", "txt": "a"}], "Error: step 1 (tap): invalid args"),
+        (["tap"], "Error: step 1: expected an object"),
+        ([], "Error: steps is empty"),
+        ([{"action": "wait", "seconds": 0}] * 51, "Error: too many steps (51)"),
+    ]
+    for steps, expected in bad:
+        assert asyncio.run(adbmm.run_steps(steps)).startswith(expected)
+    assert shell.calls == []
+
+
+def test_run_steps_runs_in_order_and_stops_at_first_failure(monkeypatch, emulator):
+    shell = FakeShell(fail=["input", "keyevent", "KEYCODE_HOME"])
+    monkeypatch.setattr(adbmm, "_adb_shell", shell)
+
+    async def state(device=None, mode="optimal"):
+        return "Device: emulator-5554"
+
+    monkeypatch.setattr(adbmm, "get_state", state)
+    result = asyncio.run(adbmm.run_steps([
+        {"action": "press_key", "key": "BACK"},
+        {"action": "wait", "seconds": 0},
+        {"action": "press_key", "key": "HOME"},
+        {"action": "press_key", "key": "ENTER"},
+    ]))
+    assert result.splitlines() == [
+        "1 ok press_key: Pressed BACK.",
+        "2 ok wait: Waited 0.0s.",
+        "3 FAIL press_key: press_key failed (exit 1): boom",
+        "Stopped at step 3/4.",
+        "",
+        "Screen at failure:",
+        "Device: emulator-5554",
+    ]
+    assert ["input", "keyevent", "KEYCODE_ENTER"] not in shell.calls
+
+
+def test_run_steps_all_passed(monkeypatch, emulator):
+    monkeypatch.setattr(adbmm, "_adb_shell", FakeShell())
+    result = asyncio.run(adbmm.run_steps([{"action": "launch_activity", "component": "a.b/.Main"}]))
+    assert result.splitlines() == ["1 ok launch_activity: Launched a.b/.Main.", "All 1 step(s) passed."]

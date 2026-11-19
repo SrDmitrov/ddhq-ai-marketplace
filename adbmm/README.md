@@ -60,13 +60,17 @@ The project root is `CLAUDE_PROJECT_DIR`, or the current directory if unset. Scr
 
 ## Tools
 
-Tool names are `mcp__plugin_adbmm_adbmm__<tool>`.
+Tool names are `mcp__plugin_adbmm_adbmm__<tool>`. Agents must use these tools, not the `adb` CLI from Bash: the Bash sandbox cannot reach the adb server, and the CLI bypasses the emulator-only guard.
 
 - Devices: `list_devices`, `use_device`, `list_avds`, `start_emulator`, `stop_emulator`, `kill_emulator`, `device_info`
 - Build and app: `build_install`, `launch_app`, `launch_activity`, `stop_app`, `uninstall_app`, `list_app_activities`
 - Observe: `get_state`, `screenshot`, `screenshot_masked`, `ui_tree`, `current_activity`, `notifications`, `logcat`, `dumpsys`
-- Input: `tap`, `long_press`, `swipe`, `scroll`, `input_text`, `clear_text`, `press_key`, `unlock`, `wait`
+- Input: `tap`, `long_press`, `swipe`, `scroll`, `input_text`, `clear_text`, `press_key`, `unlock`, `wait`, `wait_for`
+- Network: `network` (airplane mode, wifi, mobile data)
+- Scripted test: `run_steps` (a list of actions in one call, stops at the first failure)
 - Trace: `trace_flow`, `trace_end`, `trace_status`, `trace_save`
+
+`run_steps` runs a scripted test: a list of actions in one call. See [RUN_STEPS.md](RUN_STEPS.md) for the step format, the allowed actions and their arguments.
 
 `build_install(variant="debug", module="app")` runs `:<module>:install<Variant>`. Only debug variants are accepted, so release and signing tasks stay unreachable.
 
@@ -84,6 +88,7 @@ Suggested allowlist for the read-only tools, in `.claude/settings.json`:
       "mcp__plugin_adbmm_adbmm__get_state",
       "mcp__plugin_adbmm_adbmm__ui_tree",
       "mcp__plugin_adbmm_adbmm__current_activity",
+      "mcp__plugin_adbmm_adbmm__wait_for",
       "mcp__plugin_adbmm_adbmm__trace_status"
     ]
   }
