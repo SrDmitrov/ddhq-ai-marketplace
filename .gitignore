@@ -53,3 +53,5 @@ out/
 .env.local
 .env.*.local
 coverage/
+
+/docs/
