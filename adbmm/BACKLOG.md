@@ -3,6 +3,7 @@
 ## Open: fixes and upgrades
 - [ ] **Unknown `mode` value:** error (current) or silent fallback to `optimal`? Decision pending.
 - [ ] `ui_tree` still cuts labels at 80 characters. Decide whether it should be uncut, as the "full detail" tool.
+- [ ] **Token reduction & skill lazy-loading:** Audit tool descriptions, trim INSTRUCTIONS and docstrings, extract usage guide to `HOW_TO_USE.md` as skill body. See [PLAN.md](PLAN.md).
 
 ## Phase 2: new features
 - [ ] **F2: loading awareness.** Add a `Loading:` hint to `get_state` (progress bars, empty lists, loader ids, the UI changing between two quick dumps).
