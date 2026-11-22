@@ -19,6 +19,7 @@ import atexit
 import functools
 import inspect
 import io
+import json
 import os
 import re
 import shlex
@@ -30,8 +31,10 @@ import tempfile
 import unicodedata
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
+from datetime import datetime
 from difflib import SequenceMatcher
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from mcp.server.fastmcp import FastMCP, Image
 from PIL import Image as PILImage, ImageDraw
@@ -101,8 +104,12 @@ Trace:
 session scratchpad as trace_dir. It records the device logcat from that moment into \
 logcat-<title>.log. One call per flow. Call trace_end when the flow is done. A flow also ends on \
 the next trace_flow, stop_emulator, kill_emulator and server exit.
-- Backend HTTP calls may appear in the logcat if the app logs them. For live inspection, suggest \
-Android Studio's Network Inspector to the user.
+- trace_flow tags=[...] records only those tags, package=... only that app. Use them to keep \
+flow logs small (for example tags=["OkHttp", <app navigation tags>]).
+- If the app logs HTTP with OkHttp's HttpLoggingInterceptor, http_calls(title) lists the flow's \
+calls (status, ms, size, slow). marker_tags=[...] shows navigation lines between the calls. It \
+also reads .logcat files exported from Android Studio. For live inspection, suggest Android \
+Studio's Network Inspector to the user.
 - The raw logs can contain tokens and passwords. Never paste those values into replies or docs.
 - After the run, ask the user whether to keep the logs as evidence and where. If yes, call \
 trace_save with that path.
@@ -984,6 +991,18 @@ BEARER_RE = re.compile(r"(Bearer\s+)[^\s\"',}]+", re.IGNORECASE)
 JSON_SECRET_RE = re.compile(rf'("(?:{SECRET_KEYS})"\s*:\s*")[^"]*(")')
 FORM_SECRET_RE = re.compile(rf'(?<!\w)((?:{SECRET_KEYS})=)[^&\s"]+')
 MASK = "***"
+PM_PACKAGE_UID_RE = re.compile(r"^package:(\S+)\s+uid:(\d+)")
+# `-v threadtime`: "MM-DD HH:MM:SS.mmm  PID  TID L TAG     : message".
+THREADTIME_RE = re.compile(
+    r"^\d\d-\d\d (\d\d:\d\d:\d\d\.\d{3})\s+\d+\s+(\d+)\s+[VDIWEFS]\s+(.*?)\s*:(?: (.*))?$"
+)
+HTTP_REQUEST_RE = re.compile(r"^--> (?!END )([A-Z]+) (\S+)")
+# "<-- 200 OK https://x/y (22ms, 6-byte body)"; HTTP/2 has no reason phrase.
+HTTP_RESPONSE_RE = re.compile(r"^<-- (\d{3})\b.*?(\S+) \((\d+)ms")
+HTTP_FAILED_RE = re.compile(r"^<-- HTTP FAILED: (.*)")
+HTTP_BODY_BYTES_RE = re.compile(r"(\d+)-byte body")
+HTTP_SOURCE_SUFFIXES = {".log", ".txt", ".logcat"}
+HTTP_SOURCE_MAX_BYTES = 50 * 2**20
 
 
 def _mask_secrets(line: str) -> tuple[str, int]:
@@ -1004,10 +1023,224 @@ def _validate_trace_dir(trace_dir: str) -> Path:
         raise ValueError("Refused: trace_dir must be an absolute path.")
     if not path.is_dir():
         raise ValueError(f"Refused: trace_dir {trace_dir} is not an existing directory.")
-    roots = [Path(root).resolve() for root in (*TRACE_ROOTS, tempfile.gettempdir())]
-    if not any(path.resolve().is_relative_to(root) for root in roots):
+    if not _is_under(path, _temp_roots()):
         raise ValueError("Refused: trace_dir must be inside /tmp or the system temp directory.")
     return path
+
+
+def _temp_roots() -> list[Path]:
+    return [Path(root).resolve() for root in (*TRACE_ROOTS, tempfile.gettempdir())]
+
+
+def _is_under(path: Path, roots: list[Path]) -> bool:
+    resolved = path.resolve()
+    return any(resolved.is_relative_to(root) for root in roots)
+
+
+def _flow_logs_titled(title: str | None) -> list[Path]:
+    """Flow logs of this server, all or only those recorded under `title` (any -N suffix)."""
+    if title is None:
+        return list(_flow_logs)
+    pattern = re.compile(rf"logcat-{re.escape(_flow_slug(title))}(-\d+)?\.log")
+    return [path for path in _flow_logs if pattern.fullmatch(path.name)]
+
+
+def _logcat_filterspec(tags: list[str], priority: str = "V") -> list[str]:
+    """Only `tags` at `priority` or above, everything else silent."""
+    for tag in tags:
+        if not TAG_RE.match(tag):
+            raise ValueError(
+                f"invalid tag {tag!r}; allowed: letters, digits, '.', '_', '-' (max 64 chars)."
+            )
+    return [*(f"{tag}:{priority}" for tag in tags), "*:S"]
+
+
+async def _package_uid(serial: str, package: str) -> str:
+    """App uid of an installed package (stable across app restarts, unlike the pid)."""
+    if not PACKAGE_RE.match(package):
+        raise ValueError("invalid package name.")
+    returncode, stdout_bytes, stderr_bytes = await _adb_shell(
+        serial, ["pm", "list", "packages", "-U", package]
+    )
+    _check(returncode, stderr_bytes, "pm list packages")
+    for line in _decode(stdout_bytes).splitlines():
+        match = PM_PACKAGE_UID_RE.match(line.strip())
+        if match and match.group(1) == package:
+            return match.group(2)
+    raise ValueError(f"Package {package} is not installed on {serial}.")
+
+
+# --------------------------------------------------------------------------
+# http_calls: OkHttp (HttpLoggingInterceptor) lines of a flow log or an Android
+# Studio .logcat export, paired into one row per HTTP call.
+# --------------------------------------------------------------------------
+
+@dataclass
+class LogEntry:
+    time: str  # HH:MM:SS.mmm
+    tid: str  # "" when the source has no thread ids
+    tag: str
+    message: str
+
+
+@dataclass
+class HttpCall:
+    time: str
+    tid: str
+    method: str
+    url: str
+    status: str = "no response"  # status code, "FAILED: <reason>" or "no response"
+    ok: bool = False
+    ms: int | None = None
+    req_bytes: int = 0
+    resp_bytes: int = 0
+    open: bool = True
+
+
+def _read_log_entries(path: Path) -> list[LogEntry]:
+    """Entries of a threadtime text log, or of an Android Studio .logcat (JSON) export."""
+    if path.suffix == ".logcat":
+        try:
+            data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+            messages = data["logcatMessages"]
+        except (ValueError, KeyError, TypeError) as e:
+            raise ValueError(f"{path.name} is not an Android Studio .logcat export: {e}")
+        entries = []
+        for item in messages:
+            header = item.get("header", {})
+            stamp = header.get("timestamp", {})
+            when = datetime.fromtimestamp(stamp.get("seconds", 0) + stamp.get("nanos", 0) / 1e9)
+            time = when.strftime("%H:%M:%S.%f")[:-3]
+            for line in str(item.get("message", "")).splitlines() or [""]:
+                entries.append(LogEntry(time, str(header.get("tid", "")), header.get("tag", ""), line))
+        return entries
+    entries = []
+    with open(path, encoding="utf-8", errors="replace") as source:
+        for line in source:
+            match = THREADTIME_RE.match(line.rstrip("\n"))
+            if match:
+                time, tid, tag, message = match.groups()
+                entries.append(LogEntry(time, tid, tag, message or ""))
+    return entries
+
+
+def _pair_http_calls(entries: list[LogEntry]) -> list[HttpCall]:
+    """Pair OkHttp request, response, failure and END lines into calls, in request order.
+
+    A call's lines are logged on the thread that runs it, so a response pairs with the
+    oldest open request on its thread with the same URL (then any thread), and a
+    failure or END line with the latest call on its thread.
+    """
+    calls: list[HttpCall] = []
+    last: dict[str, HttpCall] = {}
+
+    def open_call(url: str | None, tid: str) -> HttpCall | None:
+        candidates = [c for c in calls if c.open and (url is None or c.url == url)]
+        same_thread = [c for c in candidates if c.tid == tid]
+        if url is None:
+            return (same_thread or candidates or [None])[-1]
+        return (same_thread or candidates or [None])[0]
+
+    for entry in entries:
+        if entry.tag != "OkHttp":
+            continue
+        message = entry.message.strip()
+        size = HTTP_BODY_BYTES_RE.search(message)
+        if message.startswith("--> END "):
+            if size and entry.tid in last:
+                last[entry.tid].req_bytes = int(size.group(1))
+        elif message.startswith("<-- END HTTP"):
+            if size and entry.tid in last:
+                last[entry.tid].resp_bytes = int(size.group(1))
+        elif match := HTTP_FAILED_RE.match(message):
+            call = open_call(None, entry.tid)
+            if call:
+                call.status, call.open = f"FAILED: {match.group(1)}", False
+                last[entry.tid] = call
+        elif match := HTTP_REQUEST_RE.match(message):
+            call = HttpCall(entry.time, entry.tid, match.group(1), match.group(2))
+            if size:
+                call.req_bytes = int(size.group(1))
+            calls.append(call)
+            last[entry.tid] = call
+        elif match := HTTP_RESPONSE_RE.match(message):
+            code, url, ms = match.groups()
+            call = open_call(url, entry.tid)
+            if call:
+                call.status, call.ok, call.ms, call.open = code, int(code) < 400, int(ms), False
+                if size:
+                    call.resp_bytes = int(size.group(1))
+                last[entry.tid] = call
+    return calls
+
+
+def _resolve_http_source(source: str) -> Path:
+    """A flow title of this server (its latest log), or a log file in the project or temp dir."""
+    if "/" not in source and Path(source).suffix not in HTTP_SOURCE_SUFFIXES:
+        logs = _flow_logs_titled(source)
+        if not logs:
+            raise ValueError(f"No flow log titled {source!r}; see trace_status.")
+        return logs[-1]
+    path = Path(source)
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    if path.suffix not in HTTP_SOURCE_SUFFIXES:
+        raise ValueError(f"Refused: source must end in {', '.join(sorted(HTTP_SOURCE_SUFFIXES))}.")
+    if not _is_under(path, [PROJECT_ROOT, *_temp_roots()]):
+        raise ValueError("Refused: source must be inside the project or the system temp directory.")
+    if not path.is_file():
+        raise ValueError(f"No such file: {path}")
+    if path.stat().st_size > HTTP_SOURCE_MAX_BYTES:
+        raise ValueError(f"Refused: {path.name} is larger than {HTTP_SOURCE_MAX_BYTES // 2**20} MiB.")
+    return path
+
+
+def _http_report(
+    entries: list[LogEntry], calls: list[HttpCall], slow_ms: int, marker_tags: list[str]
+) -> str:
+    hosts: dict[str, int] = {}
+    for call in calls:
+        parts = urlsplit(call.url)
+        origin = f"{parts.scheme}://{parts.netloc}"
+        hosts[origin] = hosts.get(origin, 0) + 1
+    main = max(hosts, key=hosts.get) if hosts else ""
+
+    def short(url: str) -> str:
+        return _mask_secrets(url[len(main):] if main and url.startswith(main + "/") else url)[0]
+
+    def kib(n: int) -> str:
+        return f"{n / 1024:.2f} KiB"
+
+    def call_line(call: HttpCall) -> str:
+        line = f"{call.time} {call.method} {short(call.url)} {_cut(_mask_secrets(call.status)[0], 80)}"
+        if call.ms is not None:
+            line += f" {call.ms}ms"
+        line += f" {kib(call.req_bytes + call.resp_bytes)}"
+        if call.ms is not None and call.ms > slow_ms:
+            line += " SLOW"
+        return line
+
+    # Markers and calls in log order: a call sits where its request line was logged.
+    rows: list[str] = []
+    by_request = iter(calls)
+    for entry in entries:
+        if entry.tag in marker_tags:
+            rows.append(f"{entry.time} [{entry.tag}] {_cut(_mask_secrets(entry.message.strip())[0], 120)}")
+        elif entry.tag == "OkHttp" and HTTP_REQUEST_RE.match(entry.message.strip()):
+            rows.append(call_line(next(by_request)))
+
+    failed = [c for c in calls if not c.open and not c.ok]
+    pending = [c for c in calls if c.open]
+    slow = [c for c in calls if c.ms is not None and c.ms > slow_ms]
+    summary = (
+        f"Calls: {len(calls)} (ok {len(calls) - len(failed) - len(pending)}, failed {len(failed)}, "
+        f"no response {len(pending)}) | total {sum(c.ms or 0 for c in calls)} ms | "
+        f"total {kib(sum(c.req_bytes + c.resp_bytes for c in calls))} | slow (>{slow_ms} ms) {len(slow)}"
+    )
+    header = [f"Base URL: {main}" if main else "No OkHttp calls found."]
+    if len(hosts) > 1:
+        header.append("Hosts: " + ", ".join(f"{h} ({n})" for h, n in hosts.items()))
+    return "\n".join([*header, *rows, summary])
 
 
 def _flow_slug(title: str) -> str:
@@ -1500,11 +1733,14 @@ async def notifications(device: str | None = None) -> str:
 async def logcat(
     lines: int = 200,
     priority: str = "V",
-    tag: str | None = None,
+    tag: str | list[str] | None = None,
     clear_first: bool = False,
     device: str | None = None,
 ) -> str:
-    """Dump recent logcat output (never streams — always `-d`). Capped at 500 lines."""
+    """Dump recent logcat output (never streams — always `-d`). Capped at 500 lines.
+
+    tag: one tag or a list of tags (for example ["OkHttp", "NAVIGATION_PATH"]); other tags silent.
+    """
     serial = await _resolve_device(device)
 
     lines = max(1, min(500, lines))
@@ -1516,12 +1752,8 @@ async def logcat(
         rc, _, err = await _adb_shell(serial, ["logcat", "-c"])
         _check(rc, err, "logcat -c")
 
-    if tag is not None:
-        if not TAG_RE.match(tag):
-            raise ValueError("invalid tag; allowed: letters, digits, '.', '_', '-' (max 64 chars).")
-        filterspec = [f"{tag}:{priority}", "*:S"]
-    else:
-        filterspec = [f"*:{priority}"]
+    tags = [tag] if isinstance(tag, str) else tag
+    filterspec = _logcat_filterspec(tags, priority) if tags else [f"*:{priority}"]
 
     args = ["logcat", "-d", "-t", str(lines), "-v", "threadtime", *filterspec]
     returncode, stdout_bytes, stderr_bytes = await _adb_shell(serial, args)
@@ -1531,8 +1763,18 @@ async def logcat(
 
 @mcp.tool()
 @_returns_errors
-async def trace_flow(title: str, trace_dir: str, device: str | None = None) -> str:
+async def trace_flow(
+    title: str,
+    trace_dir: str,
+    tags: list[str] | None = None,
+    package: str | None = None,
+    device: str | None = None,
+) -> str:
     """Start recording the device logcat of one QA flow into trace_dir/logcat-<title>.log.
+
+    tags: record only these tags (for example ["OkHttp", "NAVIGATION_PATH"]). package: record
+    only that installed app's lines (by app uid, so an app restart keeps recording). Both
+    unset records everything.
 
     Call it at the start of every QA test/flow, once per flow, with a short flow title and the
     session scratchpad as trace_dir (absolute, inside /tmp or the system temp dir). The file holds
@@ -1544,6 +1786,9 @@ async def trace_flow(title: str, trace_dir: str, device: str | None = None) -> s
     if not slug:
         raise ValueError("title must contain letters or digits.")
     serial = await _resolve_device(device)
+    filters = _logcat_filterspec(tags) if tags else []
+    if package is not None:
+        filters.insert(0, f"--uid={await _package_uid(serial, package)}")
     await _end_trace(serial, grace_s=0)
     path = base_dir / f"logcat-{slug}.log"
     number = 2
@@ -1557,7 +1802,7 @@ async def trace_flow(title: str, trace_dir: str, device: str | None = None) -> s
     try:
         with open(path, "wb") as out:
             proc = subprocess.Popen(
-                [_resolve_adb(), "-s", serial, "logcat", "-v", "threadtime", "-T", start],
+                [_resolve_adb(), "-s", serial, "logcat", "-v", "threadtime", "-T", start, *filters],
                 stdin=subprocess.DEVNULL,
                 stdout=out,
                 stderr=subprocess.DEVNULL,
@@ -1603,10 +1848,7 @@ async def trace_save(dest_dir: str, title: str | None = None) -> str:
     dest_dir must be absolute; it is created if missing and existing files there are never
     overwritten. Works on live and finished flows.
     """
-    logs = _flow_logs
-    if title is not None:
-        pattern = re.compile(rf"logcat-{re.escape(_flow_slug(title))}(-\d+)?\.log")
-        logs = [path for path in logs if pattern.fullmatch(path.name)]
+    logs = _flow_logs_titled(title)
     if not logs:
         raise ValueError("No matching flow logs.")
     dest = Path(dest_dir)
@@ -1625,6 +1867,23 @@ async def trace_save(dest_dir: str, title: str | None = None) -> str:
                 masked += count
                 target.write(clean)
     return "Saved " + ", ".join(str(dest / path.name) for path in logs) + f"\nMasked values: {masked}"
+
+
+@mcp.tool()
+@_returns_errors
+async def http_calls(source: str, slow_ms: int = 1500, marker_tags: list[str] | None = None) -> str:
+    """Summarize the OkHttp calls of a flow: one line per call, then totals.
+
+    source: a flow title (its latest log), or a .log/.txt (threadtime) or .logcat (Android
+    Studio export) file in the project or temp dir. Needs the app's OkHttp
+    HttpLoggingInterceptor. Call line: time METHOD path status ms size [SLOW over slow_ms].
+    marker_tags: tags (for example NAVIGATION_PATH) whose lines are shown between the calls,
+    to see which screen made which call. Headers and bodies are never shown.
+    """
+    markers = marker_tags or []
+    _logcat_filterspec(markers)  # validates the tags
+    entries = _read_log_entries(_resolve_http_source(source))
+    return _truncate(_http_report(entries, _pair_http_calls(entries), slow_ms, markers))
 
 
 @mcp.tool()

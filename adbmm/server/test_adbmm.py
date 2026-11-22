@@ -3,6 +3,7 @@
 import asyncio
 import inspect
 import io
+import json
 import sys
 from pathlib import Path
 
@@ -874,3 +875,125 @@ def test_run_steps_all_passed(monkeypatch, emulator):
     monkeypatch.setattr(adbmm, "_adb_shell", FakeShell())
     result = asyncio.run(adbmm.run_steps([{"action": "launch_activity", "component": "a.b/.Main"}]))
     assert result.splitlines() == ["1 ok launch_activity: Launched a.b/.Main.", "All 1 step(s) passed."]
+
+
+# --- capture filters and http_calls ---
+
+
+def test_logcat_filterspec_validates_tags():
+    assert adbmm._logcat_filterspec(["OkHttp", "NAV_PATH"]) == ["OkHttp:V", "NAV_PATH:V", "*:S"]
+    assert adbmm._logcat_filterspec(["OkHttp"], "I") == ["OkHttp:I", "*:S"]
+    with pytest.raises(ValueError):
+        adbmm._logcat_filterspec(["bad tag"])
+
+
+def test_trace_flow_filters_by_tags_and_package_uid(traces, tmp_path, monkeypatch):
+    async def fake_adb_shell(serial, shell_args, timeout=0):
+        if shell_args[:2] == ["pm", "list"]:
+            return 0, b"package:es.example.app.debug uid:10200\npackage:es.example.app uid:10123\n", b""
+        return 0, b"1763288430\n", b""
+
+    monkeypatch.setattr(adbmm, "_adb_shell", fake_adb_shell)
+    asyncio.run(adbmm.trace_flow("login", str(tmp_path), tags=["OkHttp", "NAV"], package=APP))
+    assert traces[0].argv[-4:] == ["--uid=10123", "OkHttp:V", "NAV:V", "*:S"]
+    missing = asyncio.run(adbmm.trace_flow("x", str(tmp_path), package="com.missing"))
+    assert missing.startswith("Error:") and "not installed" in missing
+    bad = asyncio.run(adbmm.trace_flow("x", str(tmp_path), tags=["a b"]))
+    assert bad.startswith("Error:") and not traces[0].terminated  # live flow kept on bad input
+
+
+def tt(time, tid, tag, message):
+    """One `-v threadtime` line."""
+    return f"01-19 {time} 12006 {tid:>5} I {tag:<8}: {message}\n"
+
+
+OKHTTP_LOG = "".join([
+    tt("09:52:50.000", 1, "NAV_PATH", "home -> plp"),
+    tt("09:52:53.100", 10, "OkHttp", "--> GET https://api.x.com/v1/products?page=1&token=abc"),
+    tt("09:52:53.101", 11, "OkHttp", "--> POST https://api.x.com/v1/cart http/1.1"),
+    tt("09:52:53.102", 11, "OkHttp", "Content-Type: application/json"),
+    tt("09:52:53.103", 11, "OkHttp", '{"password":"hunter2"}'),
+    tt("09:52:53.104", 11, "OkHttp", "--> END POST (22-byte body)"),
+    tt("09:52:53.300", 10, "OkHttp", "<-- 200 OK https://api.x.com/v1/products?page=1&token=abc (200ms)"),
+    tt("09:52:53.301", 10, "OkHttp", "<-- END HTTP (2048-byte body)"),
+    tt("09:52:55.000", 11, "OkHttp", "<-- 404 Not Found https://api.x.com/v1/cart (1900ms, 10-byte body)"),
+    tt("09:52:56.000", 1, "NAV_PATH", "plp -> pdp"),
+    tt("09:52:56.100", 12, "OkHttp", "--> GET https://www.google-analytics.com/collect"),
+    tt("09:52:56.200", 12, "OkHttp", "<-- 204 https://www.google-analytics.com/collect (5ms, 0-byte body)"),
+    tt("09:52:57.000", 13, "OkHttp", "--> GET https://api.x.com/v1/pdp/1"),
+    tt("09:52:58.000", 13, "OkHttp", "<-- HTTP FAILED: java.net.SocketTimeoutException: timeout"),
+    tt("09:52:59.000", 14, "OkHttp", "--> GET https://api.x.com/v1/reviews"),
+    "--------- beginning of main\n",
+    tt("09:53:00.000", 2, "Other", "--> GET https://ignored.com/x"),
+])
+
+
+def write_tmp(directory, name, text):
+    path = directory / name
+    path.write_text(text)
+    return path
+
+
+def test_pair_http_calls_threadtime(tmp_path):
+    entries = adbmm._read_log_entries(write_tmp(tmp_path, "flow.log", OKHTTP_LOG))
+    calls = adbmm._pair_http_calls(entries)
+    got = [(c.method, c.url.split("?")[0], c.status, c.ok, c.ms, c.req_bytes, c.resp_bytes) for c in calls]
+    assert got == [
+        ("GET", "https://api.x.com/v1/products", "200", True, 200, 0, 2048),
+        ("POST", "https://api.x.com/v1/cart", "404", False, 1900, 22, 10),
+        ("GET", "https://www.google-analytics.com/collect", "204", True, 5, 0, 0),
+        ("GET", "https://api.x.com/v1/pdp/1", "FAILED: java.net.SocketTimeoutException: timeout",
+         False, None, 0, 0),
+        ("GET", "https://api.x.com/v1/reviews", "no response", False, None, 0, 0),
+    ]
+
+
+def test_http_report_markers_masking_and_summary(tmp_path):
+    entries = adbmm._read_log_entries(write_tmp(tmp_path, "flow.log", OKHTTP_LOG))
+    report = adbmm._http_report(entries, adbmm._pair_http_calls(entries), 1500, ["NAV_PATH"])
+    lines = report.splitlines()
+    assert lines[0] == "Base URL: https://api.x.com"
+    assert lines[1] == "Hosts: https://api.x.com (4), https://www.google-analytics.com (1)"
+    assert lines[2] == "09:52:50.000 [NAV_PATH] home -> plp"
+    assert lines[3] == "09:52:53.100 GET /v1/products?page=1&token=*** 200 200ms 2.00 KiB"
+    assert lines[4] == "09:52:53.101 POST /v1/cart 404 1900ms 0.03 KiB SLOW"
+    assert lines[5] == "09:52:56.000 [NAV_PATH] plp -> pdp"
+    assert lines[6].startswith("09:52:56.100 GET https://www.google-analytics.com/collect 204 5ms")
+    assert "FAILED: java.net.SocketTimeoutException" in lines[7]
+    assert lines[8].endswith("/v1/reviews no response 0.00 KiB")
+    assert lines[9] == ("Calls: 5 (ok 2, failed 2, no response 1) | total 2105 ms | "
+                        "total 2.03 KiB | slow (>1500 ms) 1")
+    assert "hunter2" not in report and "ignored.com" not in report
+
+
+def test_read_logcat_json_export_feeds_same_pairing(tmp_path):
+    export = {
+        "metadata": {"device": {}},
+        "logcatMessages": [
+            {"header": {"tid": 7, "tag": "OkHttp", "timestamp": {"seconds": 1768811563, "nanos": 852000000}},
+             "message": "--> GET https://api.x.com/a"},
+            {"header": {"tid": 7, "tag": "OkHttp", "timestamp": {"seconds": 1768811564, "nanos": 0}},
+             "message": "<-- 200 OK https://api.x.com/a (30ms, 1024-byte body)"},
+        ],
+    }
+    entries = adbmm._read_log_entries(write_tmp(tmp_path, "flow.logcat", json.dumps(export)))
+    assert entries[0].time.endswith(".852")
+    (call,) = adbmm._pair_http_calls(entries)
+    assert (call.status, call.ms, call.resp_bytes) == ("200", 30, 1024)
+    with pytest.raises(ValueError, match="not an Android Studio"):
+        adbmm._read_log_entries(write_tmp(tmp_path, "bad.logcat", "[]"))
+
+
+def test_http_calls_resolves_flow_title_and_refuses_paths(traces, tmp_path, monkeypatch):
+    asyncio.run(adbmm.trace_flow("checkout", str(tmp_path)))
+    (tmp_path / "logcat-checkout.log").write_text(OKHTTP_LOG)
+    result = asyncio.run(adbmm.http_calls("Checkout"))
+    assert result.startswith("Base URL: https://api.x.com") and "Calls: 5" in result
+    assert asyncio.run(adbmm.http_calls(str(tmp_path / "logcat-checkout.log"))) == result
+    assert "No flow log titled" in asyncio.run(adbmm.http_calls("nope"))
+    assert "must end in" in asyncio.run(adbmm.http_calls(str(tmp_path / "x.json")))
+    monkeypatch.setattr(adbmm, "PROJECT_ROOT", tmp_path / "project")
+    assert "Refused" in asyncio.run(adbmm.http_calls("/etc/hosts.txt"))
+    assert asyncio.run(adbmm.http_calls("Checkout", marker_tags=["a b"])).startswith("Error:")
+    assert asyncio.run(adbmm.http_calls("Checkout", slow_ms=100)).count("SLOW") == 2
+

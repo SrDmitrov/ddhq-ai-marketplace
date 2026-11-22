@@ -68,9 +68,13 @@ Tool names are `mcp__plugin_adbmm_adbmm__<tool>`. Agents must use these tools, n
 - Input: `tap`, `long_press`, `swipe`, `scroll`, `input_text`, `clear_text`, `press_key`, `unlock`, `wait`, `wait_for`
 - Network: `network` (airplane mode, wifi, mobile data)
 - Scripted test: `run_steps` (a list of actions in one call, stops at the first failure)
-- Trace: `trace_flow`, `trace_end`, `trace_status`, `trace_save`
+- Trace: `trace_flow`, `trace_end`, `trace_status`, `trace_save`, `http_calls`
 
 `run_steps` runs a scripted test: a list of actions in one call. See [RUN_STEPS.md](RUN_STEPS.md) for the step format, the allowed actions and their arguments.
+
+`trace_flow(title, trace_dir, tags=[...], package=...)` records only the given logcat tags and/or one app (by app uid, so an app restart keeps recording).
+
+`http_calls(source, slow_ms=1500, marker_tags=[...])` summarizes the OkHttp calls of a flow: one line per call (time, method, path, status, ms, size, `SLOW`), then totals. `source` is a flow title, or a `.log`/`.txt` (`-v threadtime`) or `.logcat` (Android Studio export) file in the project or temp dir. `marker_tags` lines (for example the app's navigation tags) are shown between the calls. It needs the app's `HttpLoggingInterceptor` and never shows headers or bodies.
 
 `build_install(variant="debug", module="app")` runs `:<module>:install<Variant>`. Only debug variants are accepted, so release and signing tasks stay unreachable.
 
@@ -89,7 +93,8 @@ Suggested allowlist for the read-only tools, in `.claude/settings.json`:
       "mcp__plugin_adbmm_adbmm__ui_tree",
       "mcp__plugin_adbmm_adbmm__current_activity",
       "mcp__plugin_adbmm_adbmm__wait_for",
-      "mcp__plugin_adbmm_adbmm__trace_status"
+      "mcp__plugin_adbmm_adbmm__trace_status",
+      "mcp__plugin_adbmm_adbmm__http_calls"
     ]
   }
 }
