@@ -7,17 +7,12 @@ argument-hint: [source-branch]
 
 - If `$ARGUMENTS` is provided, it is the source branch. Otherwise, ask the user whether to use the current checked-out branch or another branch, and if another, which one.
 - For another branch, verify it exists with `git rev-parse --verify <branch>`; if it is not found locally, try `origin/<branch>`. If neither exists, stop and ask the user.
-- If the source branch is the current checked-out branch, run the steps below in the current working directory.
-- Otherwise, do not check out the branch in the current working directory. Create a temporary worktree instead:
-  - `dir=$(mktemp -d) && git worktree add --detach "$dir" <branch>`
-  - Run all the steps below inside `$dir`, so documents and code are read as they are on the source branch.
-  - When done, or if you stop early for any reason, remove it with `git worktree remove --force "$dir"`.
-  - If the worktree cannot be created, stop and tell the user the error.
+- Never check out the source branch or create a worktree: this command only reads. If the source branch is not the checked-out one, read it without a checkout, using `git diff`, `git log`, `git ls-tree -r --name-only <branch>` and `git show <branch>:<path>`.
 
 ## 1. Get the task description
 
-- Look for a `bugs/` or `proposals/` directory. They are expected under `{project_root}/docs/`, but that is only an assumption: if they are not there, search the rest of the project.
-- If one exists, find the document that matches the source branch (by branch name, ticket ID, or topic) and extract the task description from it.
+- Look for a `bugs/` or `proposals/` directory. They are expected under `{project_root}/docs/`, but that is only an assumption: if they are not there, search the rest of the project. Search the current working copy first, because task documents are often not committed on the source branch. If the source branch is another branch, also search it with `git ls-tree`.
+- If one exists, find the document that matches the source branch (by branch name, ticket ID, or topic) and extract the task description from it. A folder may have been named before a ticket existed, so a missing ticket ID in the name is not proof that no document matches.
 - If no description is available (neither directory exists, no document matches, or several match equally), stop and ask the user to provide the description of the task. Do not guess and do not continue without it.
 
 ## 2. Analyze the changes
@@ -30,7 +25,7 @@ argument-hint: [source-branch]
 
 - Target is external reviewers without context of the project.
 - The description must be self-contained: it will be pasted into the "Description" text box of a PR, so anything outside it will not be available to the reader. Do not reference external files (e.g. the `bugs/` or `proposals/` document); include the relevant content itself.
-- Output in Spanish, in a single fenced Markdown block in the session, that follows the template exactly. Do not create a file (not even inside the temporary worktree) or open a PR.
+- Output in Spanish, in a single fenced Markdown block in the session, that follows the template exactly. Do not create a file or open a PR.
 
 <template>
 
