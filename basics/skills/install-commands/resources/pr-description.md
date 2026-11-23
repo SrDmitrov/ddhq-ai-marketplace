@@ -5,8 +5,14 @@ argument-hint: [source-branch]
 
 ## 0. Determine the source branch
 
-- The source branch is `$ARGUMENTS` if provided; otherwise, the current checked-out branch.
-- If provided, verify it exists with `git rev-parse --verify <branch>`; if it is not found locally, try `origin/<branch>`. If neither exists, stop and ask the user.
+- If `$ARGUMENTS` is provided, it is the source branch. Otherwise, ask the user whether to use the current checked-out branch or another branch, and if another, which one.
+- For another branch, verify it exists with `git rev-parse --verify <branch>`; if it is not found locally, try `origin/<branch>`. If neither exists, stop and ask the user.
+- If the source branch is the current checked-out branch, run the steps below in the current working directory.
+- Otherwise, do not check out the branch in the current working directory. Create a temporary worktree instead:
+  - `dir=$(mktemp -d) && git worktree add --detach "$dir" <branch>`
+  - Run all the steps below inside `$dir`, so documents and code are read as they are on the source branch.
+  - When done, or if you stop early for any reason, remove it with `git worktree remove --force "$dir"`.
+  - If the worktree cannot be created, stop and tell the user the error.
 
 ## 1. Get the task description
 
@@ -24,7 +30,7 @@ argument-hint: [source-branch]
 
 - Target is external reviewers without context of the project.
 - The description must be self-contained: it will be pasted into the "Description" text box of a PR, so anything outside it will not be available to the reader. Do not reference external files (e.g. the `bugs/` or `proposals/` document); include the relevant content itself.
-- Output in Spanish, in a single fenced Markdown block that follows the template exactly. Do not create a file or open a PR.
+- Output in Spanish, in a single fenced Markdown block in the session, that follows the template exactly. Do not create a file (not even inside the temporary worktree) or open a PR.
 
 <template>
 
