@@ -14,7 +14,7 @@ Betterleaks is MIT licensed. Its license text is in [THIRD_PARTY_NOTICES](THIRD_
 
 ## What it does
 
-- At session start, reads the environment and collects secret values: variables whose name contains KEY, TOKEN, SECRET, PASSWORD, AUTH, etc., plus high-entropy values. These are masked wherever they appear, at any entropy.
+- At session start, reads the environment and collects secret values: variables whose name contains KEY, TOKEN, SECRET, PASSWORD, AUTH, etc., plus high-entropy values. Session IDs (`*SESSION_ID`, `*SESSION_UUID`) and bare UUID values are identifiers and are not collected. These are masked wherever they appear, at any entropy.
 - Runs about 400 betterleaks provider rules (GitHub, AWS, Anthropic, Stripe, Slack, JWTs, private keys, credential URLs, …). A rule runs only when the text contains one of its keywords. Only the secret part is masked: `postgres://admin:Xk9q…[REDACTED:20]…7wQz@db:5432/app`.
 - Runs betterleaks' generic rule for `key = value` secrets with no known prefix. A value is masked only when it has high entropy, holds a character other than letters, `_`, `.` and `-`, contains no stopword, and its key isn't on the denylist (`public_key`, `secret_name`, `csrf_token`, …). So `auth: basic`, `token: true` and `api_key = os.getenv("X")` stay readable.
 - Masks in tool results, prompts and attachments. Example: `sk-t…[REDACTED:26]…7890`.

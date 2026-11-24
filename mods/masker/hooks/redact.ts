@@ -3,10 +3,12 @@ import { GENERIC, RULES, type Rule } from './rules.generated.ts'
 
 const SECRET_WORDS =
   /KEY|TOKEN|SECRET|PASSWORD|PASSWD|PWD|CREDENTIAL|AUTH|PRIVATE|SESSION|COOKIE|DSN|CONN/i
-const NOT_SECRET_NAME = /^(PWD|OLDPWD|SSH_AUTH_SOCK)$|^XPC_|KEYCHAIN/i
+// Session IDs are identifiers, not credentials (AWS_SESSION_TOKEN still matches TOKEN).
+const NOT_SECRET_NAME = /^(PWD|OLDPWD|SSH_AUTH_SOCK)$|^XPC_|KEYCHAIN|SESSION_(ID|UUID)$/i
 
 export const MASK_MARKER = /\[REDACTED(:\d+)?\]/
 const MIN_SECRET_LENGTH = 8
+const UUID = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i
 
 export const isSecretName = (name: string): boolean =>
   SECRET_WORDS.test(name) && !NOT_SECRET_NAME.test(name)
@@ -22,6 +24,7 @@ const entropy = (s: string): number => {
 export const isHighEntropy = (v: string): boolean => {
   if (v.length < 20 || /\s/.test(v)) return false
   if (/^[\/~]/.test(v) || v.includes(':')) return false // paths, URLs, PATH-like lists
+  if (UUID.test(v)) return false // IDs; UUID-shaped keys are caught by secret name or provider rules
   const classes = [/[a-z]/, /[A-Z]/, /\d/, /[^a-zA-Z\d]/].filter(r => r.test(v)).length
   return classes >= 3 && entropy(v) >= 3.5
 }

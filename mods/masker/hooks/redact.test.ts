@@ -24,6 +24,9 @@ const PROVIDERS: [string, string, string][] = [
   ['credential url', DB_PASS, `DATABASE_URL=postgres://admin:%s@db.internal:5432/app`],
   ['generic', rand(32), 'api_key = "%s"'],
 ]
+const uuid = () => [8, 4, 4, 4, 12].map(n => rand(n, '0123456789abcdef')).join('-')
+const UUID_A = uuid()
+const UUID_B = uuid()
 const fill = (text: string, secret: string) => text.replace('%s', secret)
 
 test('every rule compiles in the mod runtime', () => {
@@ -69,10 +72,15 @@ test('leaves config that is not a secret alone', () => {
 test('picks env secrets by name or entropy, skips ordinary vars', () => {
   const env = parseEnv(
     ['HOME=/Users/me', 'PATH=/usr/bin:/bin', 'PWD=/tmp/project', `MY_API_KEY=${TOKEN}`,
-     'DB_PASSWORD=hunter2pw', 'RANDOM_BLOB=Zx9#qL2!vR8@mT4$wK7%', 'SHELL=/bin/zsh'].join('\0'),
+     'DB_PASSWORD=hunter2pw', 'RANDOM_BLOB=Zx9#qL2!vR8@mT4$wK7%', 'SHELL=/bin/zsh',
+     `CLAUDE_CODE_SESSION_ID=${UUID_A}`, `TERMINAL_UUID=${UUID_B}`].join('\0'),
   )
   expect(pickSecrets(env)).toEqual([TOKEN, 'Zx9#qL2!vR8@mT4$wK7%', 'hunter2pw'])
   expect(isHighEntropy('/usr/local/bin/something-long')).toBe(false)
+  expect(isHighEntropy(UUID_A)).toBe(false)
+  // A UUID-shaped key is still picked by its secret name.
+  expect(pickSecrets({ HEROKU_API_KEY: UUID_B })).toEqual([UUID_B])
+  expect(redact(`/tmp/claude-502/proj/${UUID_A}/scratchpad/x.log`, pickSecrets(env))).toContain(UUID_A)
 })
 
 test('masks exact env values anywhere, even low-entropy ones', () => {
