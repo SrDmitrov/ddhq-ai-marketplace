@@ -31,6 +31,14 @@ so they run in parallel. Ask each for conclusions with `path:line` references, n
 Also read `.claude/rules/`, the user's `~/.claude/CLAUDE.md`, and any parent CLAUDE.md, so the new
 files do not repeat them.
 
+Check the parent directory for sibling repositories of the same product (backend, other mobile
+apps). Their CLAUDE.md and `docs/knowledge/` show the conventions already in use and hold facts
+this repo only consumes, such as backend behaviour. Name the siblings in the Project Overview and
+link their docs instead of restating them.
+
+Subagent `path:line` references are leads, not facts. Confirm each one with `grep -n` or `sed -n`
+before it goes into a file.
+
 ### 2. Inventory existing context
 
 Find every file that already guides agents or describes the project: `CLAUDE.md`,
@@ -57,6 +65,7 @@ Show the user, before writing anything:
 
 1. The proposed `docs/knowledge/` files in reading order, each with its one-line hook. Propose only
    topics with real content; a small project may need none (then CLAUDE.md inlines the detail).
+   Offer `known-issues.md` as an option, not a default (see the writing guide).
 2. The keep / fix / drop table from step 2, with the reason for each fix and drop.
 3. The questions for the `ask` claims, plus placement and tracking when they are unclear (symlink
    outside the repo, CLAUDE.md tracked although a doc says local-only). Ask them in one batch.
@@ -89,7 +98,8 @@ Tell the user, briefly:
 - facts fixed or dropped, with the reason;
 - claims left unverified, with the exact command the user can run (`! <command>`) to check them;
 - security findings, such as committed secrets or keystores: location only, never the values;
-- possible bugs noticed during the survey. List them; do not fix them as part of onboarding;
+- possible bugs noticed during the survey. List them, or put them in `known-issues.md` if the
+  user chose it. Do not fix them as part of onboarding;
 - open questions.
 
 Do not commit; the user reviews the files first.

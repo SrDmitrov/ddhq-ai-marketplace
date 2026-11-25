@@ -120,11 +120,22 @@ Typical files, in reading order (create only those with real content):
 | `endpoints.md` / `navigation.md` | routes, screens, how they are generated |
 | `<domain>-flow.md`           | one business flow, step by step |
 | `coding-conventions.md`      | rules a reviewer enforces that the linter does not |
+| `known-issues.md`            | optional, only if the user asks for it: defects and security risks found in the survey |
+
+`known-issues.md` rots faster than any other file. Keep it to concrete defects and security risks,
+each with a symbol and file as its location. Leave out line numbers, and never include secret
+values. Leave out design opinions too: "global singletons" or "no Keychain" is a description of
+the code, not a defect. It closes the reading order, and its subtitle says to fix an issue only
+when a task asks for it.
 
 ## Where facts come from
 
 Read the source, not memory or the README alone. The README is often stale; treat it as a lead to
 verify.
+
+Behaviour of another system (backend validation, webhooks, what the server rejects) counts as a
+fact only when you can see it in this repo or in a sibling repo's code. Otherwise ask the user or
+leave it out. Do not infer it from how the client calls the system.
 
 | Section | Primary sources |
 |---------|-----------------|
@@ -182,7 +193,8 @@ Run before reporting. Fix every failure.
 - [ ] Every file in `docs/knowledge/` is linked exactly once, in reading order, with link text equal
       to its H1.
 - [ ] Every path and line range mentioned in any file exists.
-- [ ] No empty section, no placeholder `<…>` left.
+- [ ] No empty section, no template placeholder `<…>` left. Naming patterns such as
+      `Modules/<Name>/` are fine; skip them when checking that paths exist.
 - [ ] IMPORTANT NOTES has 4–6 bullets; each `MUST NOT` names a fallback, each environment fact a
       safe action.
 - [ ] No fact appears twice: not in CLAUDE.md and a knowledge file, not in two knowledge files.
