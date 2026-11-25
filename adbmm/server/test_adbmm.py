@@ -997,3 +997,53 @@ def test_http_calls_resolves_flow_title_and_refuses_paths(traces, tmp_path, monk
     assert asyncio.run(adbmm.http_calls("Checkout", marker_tags=["a b"])).startswith("Error:")
     assert asyncio.run(adbmm.http_calls("Checkout", slow_ms=100)).count("SLOW") == 2
 
+
+
+@pytest.fixture
+def idle(monkeypatch, traces):
+    """Two spawned emulators (headless 5554, windowed 5556), adb faked, last call 10 min ago."""
+    async def fake_run_adb(args, timeout=0):
+        for serial, (proc, _, _) in adbmm._spawned.items():
+            if serial in args:
+                proc.terminate()
+        return 0, b"", b""
+
+    spawned = {
+        "emulator-5554": (FakeProc(["emu"]), True, "API_35"),
+        "emulator-5556": (FakeProc(["emu"]), False, "API_36"),
+    }
+    monkeypatch.setattr(adbmm, "_spawned", spawned)
+    monkeypatch.setattr(adbmm, "_pending_notes", [])
+    monkeypatch.setattr(adbmm, "_inflight", 0)
+    monkeypatch.setattr(adbmm, "_last_activity", adbmm.time.monotonic() - 600)
+    monkeypatch.setattr(adbmm, "_run_adb", fake_run_adb)
+    monkeypatch.setattr(adbmm, "_notify", lambda message: None)
+    return spawned
+
+
+def test_idle_stop_ends_flow_stops_only_headless_and_notes_next_result(idle, tmp_path):
+    asyncio.run(adbmm.trace_flow("login", str(tmp_path)))
+    adbmm._last_activity = adbmm.time.monotonic() - 600
+    asyncio.run(adbmm._stop_idle_headless())
+    assert list(adbmm._spawned) == ["emulator-5556"]
+    assert adbmm._traces["emulator-5554"].proc.terminated
+    result = asyncio.run(adbmm.trace_status())
+    assert result.startswith("Headless API_35 (emulator-5554) stopped after 5 min idle. "
+                             f"Flow log: {tmp_path / 'logcat-login.log'}\n")
+    assert adbmm._pending_notes == []
+
+
+def test_idle_stop_waits_for_running_call_and_recent_activity(idle, monkeypatch):
+    monkeypatch.setattr(adbmm, "_inflight", 1)
+    asyncio.run(adbmm._stop_idle_headless())
+    monkeypatch.setattr(adbmm, "_inflight", 0)
+    monkeypatch.setattr(adbmm, "_last_activity", adbmm.time.monotonic())
+    asyncio.run(adbmm._stop_idle_headless())
+    assert len(adbmm._spawned) == 2 and adbmm._pending_notes == []
+
+
+def test_idle_watchdog_off_when_minutes_zero(monkeypatch):
+    monkeypatch.setattr(adbmm, "IDLE_SHUTDOWN_MIN", 0)
+    monkeypatch.setattr(adbmm, "_watchdog_task", None)
+    adbmm._start_idle_watchdog()
+    assert adbmm._watchdog_task is None

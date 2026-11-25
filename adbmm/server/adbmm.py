@@ -28,6 +28,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unicodedata
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -83,8 +84,11 @@ Emulator lifecycle:
 - start_emulator (normal mode) reuses an emulator that is already running and spawns only \
 if none is up. Headless mode always spawns its own emulator. reuse=False spawns a second \
 windowed emulator next to a running one (different AVD).
-- A headless emulator started by this server is killed when the server exits. A windowed \
-one is left running.
+- A headless emulator started by this server stops after ADBMM_IDLE_SHUTDOWN_MIN minutes \
+(default 5, 0 = off) with no adbmm tool call, and when the server exits. Its live flow ends \
+first; the flow log stays in trace_dir. A windowed one is left running.
+- When the QA run is done: trace_end, ask the user about trace_save, then stop_emulator every \
+headless emulator this server started. That stop needs no confirmation.
 - stop_emulator stops only emulators started by this server.
 - kill_emulator shuts down any emulator, including Android Studio's: ALWAYS ask the user \
 for confirmation before every call. Use force=True only after a normal kill left it running.
@@ -198,6 +202,15 @@ _session_device: str | None = None
 _spawned: dict[str, tuple[subprocess.Popen, bool, str]] = {}
 # Consecutive build_install failures; reset on success.
 _build_failures = 0
+# Idle stop of headless emulators: minutes without a tool call (0 disables).
+IDLE_SHUTDOWN_MIN = float(os.environ.get("ADBMM_IDLE_SHUTDOWN_MIN", "5"))
+IDLE_CHECK_S = 30
+# Tool calls running now, and when the last one ended (time.monotonic()).
+_inflight = 0
+_last_activity = time.monotonic()
+# Notes for the agent (idle stops), prepended to the next text tool result.
+_pending_notes: list[str] = []
+_watchdog_task: asyncio.Task | None = None
 
 
 @dataclass
@@ -332,14 +345,27 @@ def _check(returncode: int, stderr_bytes: bytes, what: str) -> None:
 
 
 def _returns_errors(func):
-    """Decorator: turn a ValueError raised by a tool into an 'Error: ...' string result."""
+    """Decorator for every tool: turn a ValueError into an 'Error: ...' string result.
+
+    It also tracks tool activity for the idle watchdog and prepends pending notes to a
+    text result.
+    """
 
     @functools.wraps(func)
     async def wrapper(*args, **kwargs):
+        global _inflight, _last_activity
+        _inflight += 1
         try:
-            return await func(*args, **kwargs)
+            result = await func(*args, **kwargs)
         except ValueError as e:
-            return f"Error: {e}"
+            result = f"Error: {e}"
+        finally:
+            _inflight -= 1
+            _last_activity = time.monotonic()
+        if _pending_notes and isinstance(result, str):
+            result = "\n".join([*_pending_notes, result])
+            _pending_notes.clear()
+        return result
 
     return wrapper
 
@@ -1329,7 +1355,8 @@ async def start_emulator(
 
     Normal mode reuses an emulator that is already running and spawns only if none is up;
     reuse=False spawns `avd` anyway (for a second emulator next to a running one).
-    headless=True always spawns one without a window; it is killed when this server exits.
+    headless=True always spawns one without a window; it stops after ADBMM_IDLE_SHUTDOWN_MIN
+    (default 5) minutes without a tool call, and when this server exits.
     `avd` must be a name from list_avds. If boot_timeout_s (max 300) passes first, call
     start_emulator again with the same avd to keep waiting.
     """
@@ -1367,6 +1394,8 @@ async def start_emulator(
         except OSError as e:
             raise ValueError(f"could not start emulator: {e}")
         _spawned[serial] = (proc, headless, avd)
+        if headless:
+            _start_idle_watchdog()
 
     _, spawned_headless, spawned_avd = _spawned[serial]
     mode = "headless" if spawned_headless else "windowed"
@@ -1436,10 +1465,17 @@ async def build_install(
 @_returns_errors
 async def stop_emulator(device: str | None = None) -> str:
     """Stop an emulator started by this server (never one started elsewhere)."""
-    global _session_device
     serial = await _resolve_device(device)
     if serial not in _spawned:
         raise ValueError(f"Refused: {serial} was not started by this server.")
+    flow_log = await _stop_spawned(serial)
+    _notify(f"Emulator {serial} stopped")
+    return f"Stopped {serial}." + (f"\nFlow log: {flow_log}" if flow_log else "")
+
+
+async def _stop_spawned(serial: str) -> Path | None:
+    """Stop an emulator this server spawned and end its flow; returns the flow log or None."""
+    global _session_device
     proc = _spawned[serial][0]
     try:
         await _run_adb(["-s", serial, "emu", "kill"])
@@ -1454,9 +1490,40 @@ async def stop_emulator(device: str | None = None) -> str:
     del _spawned[serial]
     if _session_device == serial:
         _session_device = None
-    _notify(f"Emulator {serial} stopped")
-    flow_log = await _end_trace(serial)
-    return f"Stopped {serial}." + (f"\nFlow log: {flow_log}" if flow_log else "")
+    return await _end_trace(serial)
+
+
+async def _stop_idle_headless() -> None:
+    """Stop every headless emulator of this server once no tool call ran for IDLE_SHUTDOWN_MIN."""
+    if _inflight or time.monotonic() - _last_activity < IDLE_SHUTDOWN_MIN * 60:
+        return
+    for serial, (_, headless, avd) in list(_spawned.items()):
+        if not headless:
+            continue
+        flow_log = await _stop_spawned(serial)
+        _notify(f"Headless {avd} ({serial}) stopped: idle")
+        _pending_notes.append(
+            f"Headless {avd} ({serial}) stopped after {IDLE_SHUTDOWN_MIN:g} min idle."
+            + (f" Flow log: {flow_log}" if flow_log else "")
+        )
+
+
+def _has_headless() -> bool:
+    _drop_exited_emulators()
+    return any(headless for _, headless, _ in _spawned.values())
+
+
+async def _idle_watchdog() -> None:
+    """Runs while this server has a headless emulator; stops idle ones."""
+    while _has_headless():
+        await asyncio.sleep(IDLE_CHECK_S)
+        await _stop_idle_headless()
+
+
+def _start_idle_watchdog() -> None:
+    global _watchdog_task
+    if IDLE_SHUTDOWN_MIN > 0 and (_watchdog_task is None or _watchdog_task.done()):
+        _watchdog_task = asyncio.create_task(_idle_watchdog())
 
 
 async def _emulator_pid(serial: str) -> int:

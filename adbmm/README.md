@@ -44,6 +44,7 @@ Set the env per project in `.claude/settings.local.json`. Claude Code keeps that
 | `JAVA_HOME` | Required | JDK that runs Gradle. Match the project's Gradle JDK in Android Studio (for example Corretto 17). |
 | `ANDROID_HOME` | Recommended | SDK location. Falls back to the OS default (see below). |
 | `ANDROID_AVD_HOME` | Optional | AVD location, if not `~/.android/avd`. |
+| `ADBMM_IDLE_SHUTDOWN_MIN` | Optional | Minutes without an adbmm tool call before a headless emulator started by the server is stopped (default 5, `0` disables). Its live flow ends first; the flow log stays in `trace_dir`. |
 | `GRADLE_OPTS`, `ORG_GRADLE_PROJECT_<prop>` | Optional | Gradle JVM options and project properties, such as private repository credentials. |
 
 On macOS, `/usr/libexec/java_home -V` lists the installed JDKs. A project JDK in `settings.local.json` overrides a system `JAVA_HOME`.
@@ -71,6 +72,8 @@ Tool names are `mcp__plugin_adbmm_adbmm__<tool>`. Agents must use these tools, n
 - Trace: `trace_flow`, `trace_end`, `trace_status`, `trace_save`, `http_calls`
 
 `run_steps` runs a scripted test: a list of actions in one call. See [RUN_STEPS.md](RUN_STEPS.md) for the step format, the allowed actions and their arguments.
+
+A headless emulator started by the server stops when it is idle (see `ADBMM_IDLE_SHUTDOWN_MIN`) and when the server exits. A windowed one is left running.
 
 `trace_flow(title, trace_dir, tags=[...], package=...)` records only the given logcat tags and/or one app (by app uid, so an app restart keeps recording).
 
