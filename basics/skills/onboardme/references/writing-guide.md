@@ -15,8 +15,8 @@ How to fill [CLAUDE.template.md](../assets/CLAUDE.template.md) and
 
 ## Global rules
 
-- The root `CLAUDE.md` is an index, not a manual: keep it under ~60 lines and push detail into
-  `docs/knowledge/`. Anything a reader can get from the code itself does not belong here. CLAUDE.md
+- The root `CLAUDE.md` is an index, not a manual: aim for 60 lines, never more than 70. When it
+  runs over, move Key Technologies or Conventions detail into `docs/knowledge/`. Anything a reader can get from the code itself does not belong here. CLAUDE.md
   is loaded into every session, so each line costs tokens on every request.
 - H1 is the project name (`# El-Pibe`) or `# CLAUDE.md`. The line under it is always:
   `This file provides guidance to Claude Code when working with code in this repository.`
@@ -24,6 +24,8 @@ How to fill [CLAUDE.template.md](../assets/CLAUDE.template.md) and
 - Bold the things that must not be missed (external systems, MUST NOTs). Do not bold whole lines.
 - Drop any section that would be empty. A project with no knowledge base inlines Key Technologies
   and Architecture instead of linking them.
+- Each fact lives in one place. A knowledge file adds detail to a CLAUDE.md bullet; it does not
+  restate it. A constraint stated in IMPORTANT NOTES is not repeated in a knowledge file.
 - CLAUDE.md lives at the repository root, so every link into the knowledge base starts with
   `docs/knowledge/`. Links between knowledge files are relative (`other-file.md`).
 
@@ -75,12 +77,14 @@ work: Claude reads the file on demand instead of guessing.
 ## IMPORTANT NOTES
 
 Hard constraints only — a rule Claude can break destructively or expensively. Not style advice, not
-conventions (those go above). Each bullet: bold subject, em dash, reason, then who does it instead.
+conventions (those go above). Each bullet: bold subject, em dash, reason, then what to do instead.
+Two kinds of bullet:
 
-- Use `MUST NOT` for forbidden actions, and always name the fallback: `Ask the user to run them and
+- **Forbidden actions** use `MUST NOT`, and always name the fallback: `Ask the user to run them and
   request feedback.`
-- Include the environment facts that a local mental model gets wrong — where the database actually
+- **Environment facts** that a local mental model gets wrong — where the database actually
   lives per environment, what is absent from the servers after deploy.
+  State the risk and the safe action (`a debug sync writes real data; ask before triggering it`).
 - Aim for 4–6 bullets. A long list means something belongs in `coding-conventions.md`.
 
 ## Format of the linked documents
@@ -133,10 +137,12 @@ verify.
 
 ## What does not belong
 
+- Facts already stated in CLAUDE.md or in a sibling knowledge file.
 - Anything derivable by reading one file (class lists, method signatures, every dependency).
 - Generic best practices ("write tests", "use meaningful names").
 - Rules already in `.claude/rules/`, the user's global `~/.claude/CLAUDE.md`, or a parent CLAUDE.md.
   Duplicates drift apart; link or skip instead.
+- Business rules kept in a project wiki or another maintained doc. Link the entry page instead.
 - Version numbers, dates, ticket numbers, history and roadmap.
 - Secrets and credential values. Name where they live, never what they are.
 
@@ -154,6 +160,10 @@ checked. Old docs are the most common source of confident wrong answers.
 | Dependency / technology | declared in the build files and not commented out |
 | Constraint / environment fact | backed by config, CI or deploy scripts; otherwise ask the user |
 
+Prefer reading over running. When a check needs a command that cannot run here (the sandbox blocks
+the build cache, credentials are missing, the build is too long), confirm statically what you can,
+write the claim as `unverified`, and give the user the exact command to run.
+
 Classify each claim:
 
 - **keep** — verified, carry it over as is.
@@ -167,12 +177,15 @@ Classify each claim:
 
 Run before reporting. Fix every failure.
 
-- [ ] CLAUDE.md is ~60 lines or fewer and has no code snippets.
+- [ ] CLAUDE.md is 70 lines or fewer (target 60) and has no code snippets.
 - [ ] H1 and the fixed guidance line are present.
 - [ ] Every file in `docs/knowledge/` is linked exactly once, in reading order, with link text equal
       to its H1.
 - [ ] Every path and line range mentioned in any file exists.
 - [ ] No empty section, no placeholder `<…>` left.
-- [ ] IMPORTANT NOTES has 4–6 hard constraints, each `MUST NOT` naming a fallback.
+- [ ] IMPORTANT NOTES has 4–6 bullets; each `MUST NOT` names a fallback, each environment fact a
+      safe action.
+- [ ] No fact appears twice: not in CLAUDE.md and a knowledge file, not in two knowledge files.
+- [ ] Claims you could not check are marked `unverified`.
 - [ ] Each knowledge file is under ~110 lines, one topic, rule first.
 - [ ] No version numbers, secrets, or content duplicated from `.claude/rules/` or global CLAUDE.md.

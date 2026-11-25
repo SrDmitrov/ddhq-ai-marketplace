@@ -33,23 +33,37 @@ files do not repeat them.
 
 ### 2. Inventory existing context
 
-Skip if the project has no CLAUDE.md and no `docs/knowledge/`.
+Find every file that already guides agents or describes the project: `CLAUDE.md`,
+`CLAUDE.local.md`, `AGENTS.md`, `.cursorrules`, `.github/copilot-instructions.md`,
+`docs/knowledge/`, onboarding or "readme for agents" drafts anywhere under `docs/` (they often sit
+in odd places such as `docs/tmp/`), the README and any project wiki. Skip this step only if none
+exist.
 
-Otherwise list every factual claim in them (paths, line ranges, classes, commands, dependencies,
+List every factual claim in them (paths, line ranges, classes, commands, dependencies,
 constraints). Verify each against the code as described in the writing guide
 (§ Verifying existing content) and classify it as keep, fix, drop or ask. Old docs read as
-authoritative, so an unchecked stale fact misleads every future session.
+authoritative, so an unchecked stale fact misleads every future session. Business rules that live in
+a maintained wiki or doc stay there: link them, do not copy them.
 
 ### 3. Plan and confirm
+
+Before planning, check where the output will land and whether git tracks it:
+
+- `ls -l` on `docs/` and `docs/knowledge/`: a symlink may point outside the repository (a folder
+  shared by several apps).
+- `git check-ignore -v CLAUDE.md docs` and `git ls-files CLAUDE.md`: is CLAUDE.md tracked or local-only?
 
 Show the user, before writing anything:
 
 1. The proposed `docs/knowledge/` files in reading order, each with its one-line hook. Propose only
    topics with real content; a small project may need none (then CLAUDE.md inlines the detail).
 2. The keep / fix / drop table from step 2, with the reason for each fix and drop.
-3. The questions for the `ask` claims.
+3. The questions for the `ask` claims, plus placement and tracking when they are unclear (symlink
+   outside the repo, CLAUDE.md tracked although a doc says local-only). Ask them in one batch.
 
-Wait for confirmation and answers. Adjust the plan to the user's feedback.
+Wait for confirmation and answers. Adjust the plan to the user's feedback. To keep a file
+local-only, add it to `.git/info/exclude`, not to the shared `.gitignore`. Write `/docs`, not
+`/docs/`: a pattern with a trailing slash does not match a symlink.
 
 ### 4. Write the knowledge files
 
@@ -69,5 +83,13 @@ and line ranges with real lookups, not from memory. Fix each failure before repo
 
 ### 7. Report
 
-Tell the user, briefly: files created or changed, facts fixed or dropped (with reason), and any
-open question. Do not commit; the user reviews the files first.
+Tell the user, briefly:
+
+- files created or changed, including any edit to `.git/info/exclude`;
+- facts fixed or dropped, with the reason;
+- claims left unverified, with the exact command the user can run (`! <command>`) to check them;
+- security findings, such as committed secrets or keystores: location only, never the values;
+- possible bugs noticed during the survey. List them; do not fix them as part of onboarding;
+- open questions.
+
+Do not commit; the user reviews the files first.
