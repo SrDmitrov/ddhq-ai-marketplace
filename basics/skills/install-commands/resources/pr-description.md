@@ -25,11 +25,14 @@ argument-hint: [source-branch]
 
 - Target is external reviewers without context of the project.
 - The description must be self-contained: it will be pasted into the "Description" text box of a PR, so anything outside it will not be available to the reader. Do not reference external files (e.g. the `bugs/` or `proposals/` document); include the relevant content itself.
+- Start with a concise one-line title (no trailing period) summarizing the change for an external reviewer.
 - Output in Spanish, in a single fenced Markdown block in the session, that follows the template exactly. Do not create a file or open a PR.
 
 <template>
 
 ```markdown
+## {{Título conciso de una línea que resuma el cambio.}}
+
 ### Tarea
 
 {{Descripción de la tarea, extraída de bugs/proposals o facilitada por el usuario.}}
