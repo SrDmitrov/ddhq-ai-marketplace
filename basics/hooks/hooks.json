@@ -6,11 +6,21 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/block-git-write-ops.sh\""
+            "command": "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/block_git_write_ops.py\""
           },
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/block-dangerous-file-ops.sh\""
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/check_stale_hooks.py\""
           }
         ]
       }
