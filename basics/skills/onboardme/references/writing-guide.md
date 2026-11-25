@@ -28,6 +28,9 @@ How to fill [CLAUDE.template.md](../assets/CLAUDE.template.md) and
   restate it. A constraint stated in IMPORTANT NOTES is not repeated in a knowledge file.
 - CLAUDE.md lives at the repository root, so every link into the knowledge base starts with
   `docs/knowledge/`. Links between knowledge files are relative (`other-file.md`).
+- Write every code path in full from the repository root (`El Pibe/AppDelegate.swift:87-94`), also
+  on second mention. A bare `AppDelegate.swift` or `Helpers/Cache.swift` cannot be opened or
+  checked without guessing the prefix.
 
 ## Project Overview
 
@@ -137,6 +140,9 @@ Behaviour of another system (backend validation, webhooks, what the server rejec
 fact only when you can see it in this repo or in a sibling repo's code. Otherwise ask the user or
 leave it out. Do not infer it from how the client calls the system.
 
+A sibling repo's docs describe the sibling. A rule they state about their own repo (release
+process, build or test policy) is a lead for this repo, not a fact. Confirm it here or ask.
+
 | Section | Primary sources |
 |---------|-----------------|
 | Project Overview | README, manifest/app name, main entry point, API clients |
@@ -192,11 +198,11 @@ Run before reporting. Fix every failure.
 - [ ] H1 and the fixed guidance line are present.
 - [ ] Every file in `docs/knowledge/` is linked exactly once, in reading order, with link text equal
       to its H1.
-- [ ] Every path and line range mentioned in any file exists.
+- [ ] Every path is written from the repository root, and every path and line range exists.
 - [ ] No empty section, no template placeholder `<…>` left. Naming patterns such as
       `Modules/<Name>/` are fine; skip them when checking that paths exist.
 - [ ] IMPORTANT NOTES has 4–6 bullets; each `MUST NOT` names a fallback, each environment fact a
-      safe action.
+      safe action. Each bullet was approved in step 3; none was added afterwards.
 - [ ] No fact appears twice: not in CLAUDE.md and a knowledge file, not in two knowledge files.
 - [ ] Claims you could not check are marked `unverified`.
 - [ ] Each knowledge file is under ~110 lines, one topic, rule first.

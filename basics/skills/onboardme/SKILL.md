@@ -34,7 +34,8 @@ files do not repeat them.
 Check the parent directory for sibling repositories of the same product (backend, other mobile
 apps). Their CLAUDE.md and `docs/knowledge/` show the conventions already in use and hold facts
 this repo only consumes, such as backend behaviour. Name the siblings in the Project Overview and
-link their docs instead of restating them.
+link their docs instead of restating them. A sibling's claim about its own repo (release process,
+build rules) does not carry over: confirm it in this repo's code or ask in step 3.
 
 Subagent `path:line` references are leads, not facts. Confirm each one with `grep -n` or `sed -n`
 before it goes into a file.
@@ -61,13 +62,18 @@ Before planning, check where the output will land and whether git tracks it:
   shared by several apps).
 - `git check-ignore -v CLAUDE.md docs` and `git ls-files CLAUDE.md`: is CLAUDE.md tracked or local-only?
 
-Show the user, before writing anything:
+Show the user, before writing anything. Items 1 and 3 are always shown, even when step 2 found
+no existing docs:
 
 1. The proposed `docs/knowledge/` files in reading order, each with its one-line hook. Propose only
    topics with real content; a small project may need none (then CLAUDE.md inlines the detail).
-   Offer `known-issues.md` as an option, not a default (see the writing guide).
+   Offer `known-issues.md` as an option, not a default, and do not mark it as recommended (see
+   the writing guide).
 2. The keep / fix / drop table from step 2, with the reason for each fix and drop.
-3. The questions for the `ask` claims, plus placement and tracking when they are unclear (symlink
+3. The proposed IMPORTANT NOTES bullets, each with its source (`path:line`, CI or deploy file). A
+   rule you cannot back with this repo's code or config is a question, not a bullet. IMPORTANT
+   NOTES changes how every future session behaves, so the user approves each bullet.
+4. The questions for the `ask` claims, plus placement and tracking when they are unclear (symlink
    outside the repo, CLAUDE.md tracked although a doc says local-only). Ask them in one batch.
 
 Wait for confirmation and answers. Adjust the plan to the user's feedback. To keep a file
