@@ -123,13 +123,23 @@ Typical files, in reading order (create only those with real content):
 | `endpoints.md` / `navigation.md` | routes, screens, how they are generated |
 | `<domain>-flow.md`           | one business flow, step by step |
 | `coding-conventions.md`      | rules a reviewer enforces that the linter does not |
-| `known-issues.md`            | optional, only if the user asks for it: defects and security risks found in the survey |
+| `known-issues.md`            | optional, the user's choice: defects, security risks and technical debt found in the survey |
 
-`known-issues.md` rots faster than any other file. Keep it to concrete defects and security risks,
-each with a symbol and file as its location. Leave out line numbers, and never include secret
-values. Leave out design opinions too: "global singletons" or "no Keychain" is a description of
-the code, not a defect. It closes the reading order, and its subtitle says to fix an issue only
-when a task asks for it.
+`known-issues.md` starts the project's technical-debt record. Known issues and technical debt are
+one list seen from two sides: a defect is debt that already causes harm, and debt is a defect
+waiting for its trigger. Record both:
+
+- defects and security risks;
+- debt with a concrete cost, such as a stale doc that misleads readers, a dependency used but not
+  declared, a deploy with no test step, or logic duplicated between modules.
+
+Give each entry a symbol or file as its location and state its cost or risk in one clause. Leave
+out line numbers, and never include secret values.
+
+Leave out design opinions. "Global singletons" or "no Keychain" describes the code; it is debt
+only when you can name what it costs. This file rots faster than any other, so the next sessions
+must keep it current. It closes the reading order, and its subtitle says to fix an entry only when
+a task asks for it.
 
 ## Where facts come from
 

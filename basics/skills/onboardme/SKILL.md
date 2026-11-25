@@ -35,7 +35,10 @@ Check the parent directory for sibling repositories of the same product (backend
 apps). Their CLAUDE.md and `docs/knowledge/` show the conventions already in use and hold facts
 this repo only consumes, such as backend behaviour. Name the siblings in the Project Overview and
 link their docs instead of restating them. A sibling's claim about its own repo (release process,
-build rules) does not carry over: confirm it in this repo's code or ask in step 3.
+build rules) does not carry over: confirm it in this repo's code or ask in step 3. Siblings often
+live elsewhere (a backend under `Python/`, its apps under `Kotlin/` or `Swift/`): if the parent
+directory holds none, ask in step 3 where the other repos of the product are, or whether there
+are none.
 
 Subagent `path:line` references are leads, not facts. Confirm each one with `grep -n` or `sed -n`
 before it goes into a file.
@@ -54,6 +57,11 @@ constraints). Verify each against the code as described in the writing guide
 authoritative, so an unchecked stale fact misleads every future session. Business rules that live in
 a maintained wiki or doc stay there: link them, do not copy them.
 
+Onboarding writes only CLAUDE.md and `docs/knowledge/`. Other files (README, `API_README.md`,
+module READMEs, help text in a Makefile) are sources: never edit or delete them. For those, fix
+means the new files carry the corrected fact, and drop means they leave it out. The stale file
+itself goes into the report, or into `known-issues.md` if the user chose it.
+
 ### 3. Plan and confirm
 
 Before planning, check where the output will land and whether git tracks it:
@@ -67,8 +75,9 @@ no existing docs:
 
 1. The proposed `docs/knowledge/` files in reading order, each with its one-line hook. Propose only
    topics with real content; a small project may need none (then CLAUDE.md inlines the detail).
-   Offer `known-issues.md` as an option, not a default, and do not mark it as recommended (see
-   the writing guide).
+   When the survey found defects or technical debt, offer `known-issues.md` and list what it
+   would hold. Explain that it starts the project's technical-debt record (see the writing
+   guide). It stays the user's choice, so do not mark it as recommended.
 2. The keep / fix / drop table from step 2, with the reason for each fix and drop.
 3. The proposed IMPORTANT NOTES bullets, each with its source (`path:line`, CI or deploy file). A
    rule you cannot back with this repo's code or config is a question, not a bullet. IMPORTANT
@@ -104,8 +113,8 @@ Tell the user, briefly:
 - facts fixed or dropped, with the reason;
 - claims left unverified, with the exact command the user can run (`! <command>`) to check them;
 - security findings, such as committed secrets or keystores: location only, never the values;
-- possible bugs noticed during the survey. List them, or put them in `known-issues.md` if the
-  user chose it. Do not fix them as part of onboarding;
+- possible bugs and technical debt noticed during the survey. List them, or put them in
+  `known-issues.md` if the user chose it. Do not fix them as part of onboarding;
 - open questions.
 
 Do not commit; the user reviews the files first.
