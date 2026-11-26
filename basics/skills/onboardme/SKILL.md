@@ -24,7 +24,9 @@ Onboarding must describe the latest code, usually the `develop` branch. A stale 
 every finding stale, and the whole survey has to be redone. Before surveying:
 
 1. Run `git fetch`. It is mandatory. When it fails (a sandbox that blocks SSH, missing
-   credentials), ask the user to run `! git fetch` and wait for it.
+   credentials), ask the user to run `! git fetch` and end your turn. Do nothing else until the
+   fetch has succeeded: no other question, no reading, no survey agents. Work done before the
+   fetch may describe code that the fetch replaces.
 2. Run `git status -sb` and `git log -1 --format='%h %cr %s'` to see the branch, how far it is
    behind its upstream, and the last commit.
 3. If the branch is not `develop` (or the repo's main integration branch), or it is behind, ask with
@@ -50,6 +52,10 @@ the parent directory (names only, do not open the folders) and ask with `AskUser
 - **Isolate:** onboard this repo alone. Do not read the siblings and do not mention them.
 - **Extend:** include the siblings. Name the ones you found and ask for the paths of any others.
   Siblings often live elsewhere (a backend under `Python/`, its apps under `Kotlin/` or `Swift/`).
+
+Look for candidates in the parent listing and in the session's additional working directories.
+When the user chooses Extend but gives no paths, ask a follow-up question with each candidate as
+its own option.
 
 Ask even when the parent directory shows no sibling: an empty listing does not prove there are
 none, so never write that they are absent. Investigate a sibling only after the user chose
