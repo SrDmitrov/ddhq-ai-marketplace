@@ -43,14 +43,21 @@ so they run in parallel. Ask each for conclusions with `path:line` references, n
 Also read `.claude/rules/`, the user's `~/.claude/CLAUDE.md`, and any parent CLAUDE.md, so the new
 files do not repeat them.
 
-Check the parent directory for sibling repositories of the same product (backend, other mobile
-apps). Their CLAUDE.md and `docs/knowledge/` show the conventions already in use and hold facts
-this repo only consumes, such as backend behaviour. Name the siblings in the Project Overview and
-link their docs instead of restating them. A sibling's claim about its own repo (release process,
-build rules) does not carry over: confirm it in this repo's code or ask in step 3. Siblings often
-live elsewhere (a backend under `Python/`, its apps under `Kotlin/` or `Swift/`): if the parent
-directory holds none, ask in step 3 where the other repos of the product are, or whether there
-are none.
+A repository usually holds one stack with one responsibility (backend, frontend, backoffice,
+mobile app). Other repositories of the same product are siblings. Before the survey starts, list
+the parent directory (names only, do not open the folders) and ask with `AskUserQuestion`:
+
+- **Isolate:** onboard this repo alone. Do not read the siblings and do not mention them.
+- **Extend:** include the siblings. Name the ones you found and ask for the paths of any others.
+  Siblings often live elsewhere (a backend under `Python/`, its apps under `Kotlin/` or `Swift/`).
+
+Ask even when the parent directory shows no sibling: an empty listing does not prove there are
+none, so never write that they are absent. Investigate a sibling only after the user chose
+Extend. Then its CLAUDE.md and `docs/knowledge/` show the conventions already in use and hold
+facts this repo only consumes, such as backend behaviour. Name the siblings in the Project
+Overview and link their docs instead of restating them. A sibling's claim about its own repo
+(release process, build rules) does not carry over: confirm it in this repo's code or ask in
+step 3.
 
 Subagent `path:line` references are leads, not facts. Confirm each one with `grep -n` or `sed -n`
 before it goes into a file.
@@ -104,13 +111,19 @@ in the calls:
 - approval of the plan, with options such as "Approve and write" and "Change the plan";
 - whether to create `known-issues.md`, when it was offered;
 - each `ask` claim and each placement or tracking question;
-- the IMPORTANT NOTES bullets as one multi-select question, so the user approves each bullet.
+- the IMPORTANT NOTES bullets as multi-select questions, one option per bullet, so the user
+  approves each bullet. A question holds at most four options: split the bullets across several
+  questions, never merge two bullets into one option.
 
 One call holds at most four questions; make several calls in a row when there are more.
 
+A rule backed only by an old doc, a handoff or a guess is not a bullet option. Ask whether the
+rule holds; it becomes a bullet only when the user confirms it.
+
 Before asking, check every part of the question the code can answer, and state those facts in it
-(for example, whether shared code is a dependency or a copy). The user should decide, not
-investigate.
+(for example, whether shared code is a dependency or a copy). When a script or config in the repo
+decides the answer (which paths an install script writes, which env a deploy loads), read it and
+state the result instead of asking. The user should decide, not investigate.
 
 When the user answers "not sure", leave the fact out of CLAUDE.md and the knowledge files, and list
 it in the report with the command that would settle it. A suspected defect still goes into

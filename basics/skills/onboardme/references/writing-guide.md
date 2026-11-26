@@ -147,7 +147,8 @@ Read the source, not memory or the README alone. The README is often stale; trea
 verify.
 
 Behaviour of another system (backend validation, webhooks, what the server rejects) counts as a
-fact only when you can see it in this repo or in a sibling repo's code. Otherwise ask the user or
+fact only when you can see it in this repo, or in a sibling repo's code when the user chose to
+include siblings. Otherwise ask the user or
 leave it out. Do not infer it from how the client calls the system.
 
 A sibling repo's docs describe the sibling. A rule they state about their own repo (release
