@@ -20,6 +20,18 @@ Files in this skill:
 
 ### 1. Survey the repository
 
+Onboarding must describe the latest code, usually the `develop` branch. A stale checkout makes
+every finding stale, and the whole survey has to be redone. Before surveying:
+
+1. Run `git fetch`. It is mandatory. When it fails (a sandbox that blocks SSH, missing
+   credentials), ask the user to run `! git fetch` and wait for it.
+2. Run `git status -sb` and `git log -1 --format='%h %cr %s'` to see the branch, how far it is
+   behind its upstream, and the last commit.
+3. If the branch is not `develop` (or the repo's main integration branch), or it is behind, ask with
+   `AskUserQuestion` whether to switch and update first (the user runs `! git checkout develop` and
+   `! git pull`) or to document this checkout as it is. Show the branch, the commits behind and
+   the last commit in the question.
+
 Delegate exploration to `Explore` subagents (`model: "haiku"`, `effort: "medium"`), split by area
 so they run in parallel. Ask each for conclusions with `path:line` references, not file dumps:
 
@@ -83,9 +95,29 @@ no existing docs:
    rule you cannot back with this repo's code or config is a question, not a bullet. IMPORTANT
    NOTES changes how every future session behaves, so the user approves each bullet.
 4. The questions for the `ask` claims, plus placement and tracking when they are unclear (symlink
-   outside the repo, CLAUDE.md tracked although a doc says local-only). Ask them in one batch.
+   outside the repo, CLAUDE.md tracked although a doc says local-only).
 
-Wait for confirmation and answers. Adjust the plan to the user's feedback. To keep a file
+Print items 1–3 as text, then in the same turn call `AskUserQuestion`. Never end the turn with the
+plan and questions in prose: the user reads that as a finished run, and nothing gets written. Put
+in the calls:
+
+- approval of the plan, with options such as "Approve and write" and "Change the plan";
+- whether to create `known-issues.md`, when it was offered;
+- each `ask` claim and each placement or tracking question;
+- the IMPORTANT NOTES bullets as one multi-select question, so the user approves each bullet.
+
+One call holds at most four questions; make several calls in a row when there are more.
+
+Before asking, check every part of the question the code can answer, and state those facts in it
+(for example, whether shared code is a dependency or a copy). The user should decide, not
+investigate.
+
+When the user answers "not sure", leave the fact out of CLAUDE.md and the knowledge files, and list
+it in the report with the command that would settle it. A suspected defect still goes into
+`known-issues.md` (when the user chose it), marked `unverified`, with that command.
+
+Adjust the plan to the answers. When an answer changes the plan materially, show the change and ask
+again. Otherwise continue to step 4 in the same turn. To keep a file
 local-only, add it to `.git/info/exclude`, not to the shared `.gitignore`. Write `/docs`, not
 `/docs/`: a pattern with a trailing slash does not match a symlink.
 
@@ -109,6 +141,7 @@ and line ranges with real lookups, not from memory. Fix each failure before repo
 
 Tell the user, briefly:
 
+- the branch and commit the files describe;
 - files created or changed, including any edit to `.git/info/exclude`;
 - facts fixed or dropped, with the reason;
 - claims left unverified, with the exact command the user can run (`! <command>`) to check them;
